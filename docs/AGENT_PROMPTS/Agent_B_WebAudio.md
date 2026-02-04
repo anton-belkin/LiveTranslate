@@ -10,12 +10,18 @@ Implement browser tab-audio capture and stream audio frames to the server over W
 - `apps/web/**`
 
 ## Forbidden
-- Do not edit `packages/shared/**` or `docs/**` or root configs.
+- Do not edit `packages/shared/**` or root configs.
 - Do not add server code.
 
 ## Required reading
 - `docs/PRODUCT.md`
+- `docs/ESCALATIONS/README.md`
 - `packages/shared/src/protocol.ts`
+
+## Escalation process (no chat relay)
+If you need a gatekeeper decision or a contract change, create an escalation file under `docs/ESCALATIONS/` (see `docs/ESCALATIONS/README.md`).
+In the agent chat, post only: `Filed escalation docs/ESCALATIONS/<filename>; status=open; blocked until answered.`
+Do not paste escalation details into chat.
 
 ## Requirements
 - Capture meeting audio via microphone (default ingestion for this PoC):

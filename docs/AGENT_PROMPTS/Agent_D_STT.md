@@ -10,14 +10,20 @@ Implement the server-side streaming STT adapter (OpenAI Realtime transcription) 
 - `apps/server/**`
 
 ## Forbidden
-- Do not edit `packages/shared/**` or `docs/**` or root configs.
+- Do not edit `packages/shared/**` or root configs.
 - Do not implement translation.
 
 ## Required reading
 - `docs/PRODUCT.md`
+- `docs/ESCALATIONS/README.md`
 - `packages/shared/src/protocol.ts`
 - `packages/shared/src/providers.ts`
 - `packages/shared/src/segmentation.ts`
+
+## Escalation process (no chat relay)
+If you need a gatekeeper decision or a contract change, create an escalation file under `docs/ESCALATIONS/` (see `docs/ESCALATIONS/README.md`).
+In the agent chat, post only: `Filed escalation docs/ESCALATIONS/<filename>; status=open; blocked until answered.`
+Do not paste escalation details into chat.
 
 ## Requirements
 - Add an STT adapter module that can be called by the WS session code.

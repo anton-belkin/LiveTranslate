@@ -10,13 +10,19 @@ Translate finalized segments DE↔EN with streaming output and emit `translate.p
 - `apps/server/**`
 
 ## Forbidden
-- Do not edit `packages/shared/**` or `docs/**` or root configs.
+- Do not edit `packages/shared/**` or root configs.
 - Do not change STT code except wiring to consume finalized segments.
 
 ## Required reading
 - `docs/PRODUCT.md`
+- `docs/ESCALATIONS/README.md`
 - `packages/shared/src/protocol.ts`
 - `packages/shared/src/providers.ts`
+
+## Escalation process (no chat relay)
+If you need a gatekeeper decision or a contract change, create an escalation file under `docs/ESCALATIONS/` (see `docs/ESCALATIONS/README.md`).
+In the agent chat, post only: `Filed escalation docs/ESCALATIONS/<filename>; status=open; blocked until answered.`
+Do not paste escalation details into chat.
 
 ## Requirements
 - Translation triggers on `stt.final` segments.
