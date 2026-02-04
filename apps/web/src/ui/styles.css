@@ -213,15 +213,29 @@
   opacity: 0.98;
 }
 
-.segList {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.segLine {
+.segParagraph {
   white-space: pre-wrap;
   word-break: break-word;
+  line-height: 1.35;
+}
+
+.cursor {
+  display: inline-block;
+  margin-left: 2px;
+  opacity: 0.65;
+  animation: cursorBlink 1.1s steps(2, start) infinite;
+}
+
+@keyframes cursorBlink {
+  0% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.65;
+  }
+  100% {
+    opacity: 0.15;
+  }
 }
 
 .placeholder {

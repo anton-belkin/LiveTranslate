@@ -24,8 +24,6 @@ type ItemTiming = {
 
 type SegmentMeta = {
   turnId: string;
-  segmentStartMs: number;
-  segmentEndMs?: number;
 };
 
 type AdapterState = "idle" | "connecting" | "open" | "stopping" | "stopped";
@@ -44,26 +42,81 @@ export class OpenAIRealtimeTranscriptionAdapter {
   private queuedBytes = 0;
   private readonly maxQueuedBytes = 2 * 1024 * 1024; // 2MB
 
-  private partialTextByItemId = new Map<string, string>();
+  private segmentTextByItemId = new Map<string, string>();
   private timingsByTurnId = new Map<string, ItemTiming>();
   private segmentByItemId = new Map<string, SegmentMeta>();
   private openTurns = new Set<string>(); // turnIds
   private openSegmentsByTurnId = new Map<string, Set<string>>(); // turnId -> itemIds
+  private segmentOrderByTurnId = new Map<string, string[]>(); // turnId -> [itemId...]
+  private lastEmittedTurnText = new Map<string, string>(); // turnId -> combined text
   private maxTurnTimersByItemId = new Map<string, NodeJS.Timeout>();
 
   private audioCursorSamples = 0;
 
   private inSpeech = false;
   private currentTurnId: string | null = null;
-  private lastCommittedBoundaryMs = 0;
   private speechStartMs: number | null = null;
   private speechEndMs: number | null = null;
   private eagerCommitTimer: NodeJS.Timeout | null = null;
   private finalizeTurnTimer: NodeJS.Timeout | null = null;
   private lastCommitAt = 0;
+  private eagerCommitNextDueAt = 0;
+  private lastCommitAudioCursorMs = 0;
 
   private audioCursorNowMs() {
     return Math.floor((this.audioCursorSamples * 1000) / OPENAI_INPUT_SAMPLE_RATE_HZ);
+  }
+
+  private sanitizeText(text: string) {
+    // Strip ASCII control chars except whitespace separators we may want to keep.
+    return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+  }
+
+  private combineTurnText(turnId: string) {
+    const order = this.segmentOrderByTurnId.get(turnId) ?? [];
+    const parts: string[] = [];
+    for (const itemId of order) {
+      const t = this.segmentTextByItemId.get(itemId) ?? "";
+      if (!t) continue;
+      parts.push(t);
+    }
+    const combined = parts.join(" ").replace(/\s+/g, " ").trim();
+    return this.sanitizeText(combined);
+  }
+
+  private emitCombinedPartial(turnId: string) {
+    const combined = this.combineTurnText(turnId);
+    const prev = this.lastEmittedTurnText.get(turnId) ?? "";
+    if (combined === prev) return;
+    this.lastEmittedTurnText.set(turnId, combined);
+
+    const timing = this.timingsByTurnId.get(turnId) ?? {};
+    const startMs = timing.startMs ?? this.speechStartMs ?? 0;
+
+    this.emit({
+      type: "stt.partial",
+      sessionId: this.sessionId,
+      turnId,
+      segmentId: turnId,
+      text: combined,
+      startMs,
+    });
+  }
+
+  private emitCombinedFinal(turnId: string, endMs: number) {
+    const combined = this.combineTurnText(turnId);
+    const timing = this.timingsByTurnId.get(turnId) ?? {};
+    const startMs = timing.startMs ?? this.speechStartMs ?? 0;
+
+    this.emit({
+      type: "stt.final",
+      sessionId: this.sessionId,
+      turnId,
+      segmentId: turnId,
+      text: combined,
+      startMs,
+      endMs,
+    });
   }
 
   constructor(args: {
@@ -220,6 +273,8 @@ export class OpenAIRealtimeTranscriptionAdapter {
       const timing = this.timingsByTurnId.get(turnId);
       const startMs = timing?.startMs ?? 0;
       const endMs = timing?.endMs ?? startMs;
+      // Best-effort: emit final combined STT before turn.final.
+      this.emitCombinedFinal(turnId, endMs);
       this.emit({
         type: "turn.final",
         sessionId: this.sessionId,
@@ -292,7 +347,8 @@ export class OpenAIRealtimeTranscriptionAdapter {
       this.inSpeech = true;
       this.speechStartMs = startMs;
       this.speechEndMs = null;
-      this.lastCommittedBoundaryMs = startMs;
+      this.lastCommitAudioCursorMs = this.audioCursorNowMs();
+      this.eagerCommitNextDueAt = Date.now() + 700;
 
       if (!this.currentTurnId) {
         this.currentTurnId = newId("turn");
@@ -356,7 +412,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
       // Ensure we have a turn (speech_started may not always be emitted).
       if (!this.currentTurnId) {
         this.currentTurnId = newId("turn");
-        const startMs = this.speechStartMs ?? this.lastCommittedBoundaryMs ?? 0;
+        const startMs = this.speechStartMs ?? 0;
         this.timingsByTurnId.set(this.currentTurnId, { startMs });
         this.openTurns.add(this.currentTurnId);
         this.emit({
@@ -368,12 +424,12 @@ export class OpenAIRealtimeTranscriptionAdapter {
       }
 
       const turnId = this.currentTurnId;
-      const segmentStartMs = this.lastCommittedBoundaryMs;
-      const segmentEndMs = this.audioCursorNowMs();
-      this.lastCommittedBoundaryMs = segmentEndMs;
+      this.segmentByItemId.set(itemId, { turnId });
+      this.segmentTextByItemId.set(itemId, "");
 
-      this.segmentByItemId.set(itemId, { turnId, segmentStartMs, segmentEndMs });
-      this.partialTextByItemId.set(itemId, "");
+      const order = this.segmentOrderByTurnId.get(turnId) ?? [];
+      order.push(itemId);
+      this.segmentOrderByTurnId.set(turnId, order);
 
       const openSegs = this.openSegmentsByTurnId.get(turnId) ?? new Set<string>();
       openSegs.add(itemId);
@@ -390,18 +446,12 @@ export class OpenAIRealtimeTranscriptionAdapter {
       const seg = this.segmentByItemId.get(itemId);
       if (!seg) return;
 
-      const existing = this.partialTextByItemId.get(itemId) ?? "";
+      const existing = this.segmentTextByItemId.get(itemId) ?? "";
       const nextText = existing + delta;
-      this.partialTextByItemId.set(itemId, nextText);
+      this.segmentTextByItemId.set(itemId, nextText);
 
-      this.emit({
-        type: "stt.partial",
-        sessionId: this.sessionId,
-        turnId: seg.turnId,
-        segmentId: itemId,
-        text: nextText,
-        startMs: seg.segmentStartMs,
-      });
+      // Stitch into a single UI-facing segment per turn.
+      this.emitCombinedPartial(seg.turnId);
       return;
     }
 
@@ -412,28 +462,14 @@ export class OpenAIRealtimeTranscriptionAdapter {
 
       const seg = this.segmentByItemId.get(itemId);
       if (!seg) return;
-
-      const startMs = seg.segmentStartMs;
-      const endMs =
-        seg.segmentEndMs ??
-        this.speechEndMs ??
-        startMs;
-
-      this.emit({
-        type: "stt.final",
-        sessionId: this.sessionId,
-        turnId: seg.turnId,
-        segmentId: itemId,
-        text: transcript,
-        startMs,
-        endMs,
-      });
+      this.segmentTextByItemId.set(itemId, transcript);
+      // Emit stitched partial after finalizing a sub-segment (keeps UI up to date).
+      this.emitCombinedPartial(seg.turnId);
 
       const timer = this.maxTurnTimersByItemId.get(itemId);
       if (timer) clearTimeout(timer);
       this.maxTurnTimersByItemId.delete(itemId);
 
-      this.partialTextByItemId.delete(itemId);
       this.segmentByItemId.delete(itemId);
 
       const openSegs = this.openSegmentsByTurnId.get(seg.turnId);
@@ -465,15 +501,32 @@ export class OpenAIRealtimeTranscriptionAdapter {
 
   private startEagerCommit() {
     if (this.eagerCommitTimer) return;
-    // Commit periodically while in speech so transcription starts during speech.
+    // Adaptive eager commits while in speech so transcription starts during speech,
+    // but avoid micro-chunks by requiring a minimum audio duration between commits.
     this.eagerCommitTimer = setInterval(() => {
       if (!this.inSpeech) return;
       const ws = this.ws;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (!this.sessionConfigured) return;
-      this.lastCommitAt = Date.now();
+
+      const now = Date.now();
+      if (now < this.eagerCommitNextDueAt) return;
+
+      const audioMsSinceLastCommit = this.audioCursorNowMs() - this.lastCommitAudioCursorMs;
+      if (audioMsSinceLastCommit < 450) {
+        // Try again soon; don't advance the due time much.
+        this.eagerCommitNextDueAt = now + 150;
+        return;
+      }
+
+      // Next commit window: 700–1200ms.
+      const nextInterval = 700 + Math.floor(Math.random() * 501);
+      this.eagerCommitNextDueAt = now + nextInterval;
+      this.lastCommitAudioCursorMs = this.audioCursorNowMs();
+
+      this.lastCommitAt = now;
       ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-    }, 500);
+    }, 120);
   }
 
   private stopEagerCommit() {
@@ -510,6 +563,8 @@ export class OpenAIRealtimeTranscriptionAdapter {
     this.timingsByTurnId.set(turnId, timing);
 
     if (this.openTurns.has(turnId)) {
+      // Emit a single final stitched segment for the whole turn.
+      this.emitCombinedFinal(turnId, endMs);
       this.emit({
         type: "turn.final",
         sessionId: this.sessionId,
@@ -523,7 +578,9 @@ export class OpenAIRealtimeTranscriptionAdapter {
     this.currentTurnId = null;
     this.speechStartMs = null;
     this.speechEndMs = null;
-    this.lastCommittedBoundaryMs = endMs;
+    this.lastEmittedTurnText.delete(turnId);
+    this.segmentOrderByTurnId.delete(turnId);
+    this.openSegmentsByTurnId.delete(turnId);
 
     if (this.finalizeTurnTimer) clearTimeout(this.finalizeTurnTimer);
     this.finalizeTurnTimer = null;

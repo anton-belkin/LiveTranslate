@@ -10,35 +10,38 @@ function formatSeconds(ms?: number) {
 }
 
 function Segments({ turn, lang }: { turn: Turn; lang: Lang }) {
-  const segs = useMemo(() => {
-    const out: Array<{
-      segmentId: string;
-      text: string;
-      isFinal: boolean;
-    }> = [];
+  const combined = useMemo(() => {
+    const parts: string[] = [];
+    let anyFinal = false;
+    let anyPartial = false;
 
     for (const segmentId of turn.segmentOrder) {
       const seg = turn.segmentsById[segmentId];
       if (!seg) continue;
       if (seg.lang !== lang) continue;
-      if (!seg.text) continue;
-      out.push({ segmentId: seg.segmentId, text: seg.text, isFinal: seg.isFinal });
+      const txt = seg.text?.trim();
+      if (!txt) continue;
+
+      // Optional: hide extremely short segments unless final.
+      if (!seg.isFinal && txt.length < 3) continue;
+
+      parts.push(txt);
+      if (seg.isFinal) anyFinal = true;
+      else anyPartial = true;
     }
-    return out;
+
+    const text = parts.join(parts.length > 1 ? "\n" : " ");
+    const isFinal = anyFinal && !anyPartial;
+    const isPartial = anyPartial;
+    return { text, isFinal, isPartial };
   }, [turn.segmentOrder, turn.segmentsById, lang]);
 
-  if (segs.length === 0) return null;
+  if (!combined.text) return null;
 
   return (
-    <div className="segList">
-      {segs.map((seg) => {
-        const showText = seg.isFinal ? seg.text : seg.text.endsWith("…") ? seg.text : `${seg.text}…`;
-        return (
-          <div key={seg.segmentId} className={`segLine ${seg.isFinal ? "segFinal" : "segPartial"}`}>
-            {showText}
-          </div>
-        );
-      })}
+    <div className={`segParagraph ${combined.isFinal ? "segFinal" : combined.isPartial ? "segPartial" : ""}`}>
+      {combined.text}
+      {combined.isPartial ? <span className="cursor">▍</span> : null}
     </div>
   );
 }

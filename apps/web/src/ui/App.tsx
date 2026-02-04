@@ -6,7 +6,7 @@ import { startMicStreamer, type MicStreamerHandle, type Pcm16Frame } from "../au
 import { base64FromArrayBuffer } from "../lib/base64";
 import { WsClient, type WsClientState } from "../ws/WsClient";
 import { TranscriptView } from "./liveTranslate/TranscriptView";
-import { makeInitialState, transcriptReducer, type ConnectionStatus } from "./liveTranslate/store";
+import { makeInitialState, transcriptReducer, type ConnectionStatus, type TranscriptState } from "./liveTranslate/store";
 
 function statusDotClass(status: ConnectionStatus) {
   switch (status) {
@@ -64,6 +64,37 @@ export function App() {
     ...metricsRef.current,
   }));
 
+  type DevChunkingMetrics = {
+    turnsWithSegments: number;
+    totalSegments: number;
+    segmentsPerTurnAvg: number | null;
+    segmentsPerTurnMax: number | null;
+    segmentLenCharsAvg: number | null;
+    shortSegmentsLt3: number;
+    nonLatinPctSegmentAvg: number | null;
+    nonLatinPctSegmentMax: number | null;
+    nonLatinPctTurnAvg: number | null;
+    nonLatinPctTurnMax: number | null;
+  };
+
+  const [devChunking, setDevChunking] = useState<DevChunkingMetrics>({
+    turnsWithSegments: 0,
+    totalSegments: 0,
+    segmentsPerTurnAvg: null,
+    segmentsPerTurnMax: null,
+    segmentLenCharsAvg: null,
+    shortSegmentsLt3: 0,
+    nonLatinPctSegmentAvg: null,
+    nonLatinPctSegmentMax: null,
+    nonLatinPctTurnAvg: null,
+    nonLatinPctTurnMax: null,
+  });
+
+  const transcriptStateRef = useRef<TranscriptState | null>(null);
+  useEffect(() => {
+    transcriptStateRef.current = state;
+  }, [state]);
+
   const snapshotDevMetrics = useCallback(() => {
     setDevMetrics({ nowMs: Date.now(), ...metricsRef.current });
   }, []);
@@ -88,6 +119,18 @@ export function App() {
   const [framesSent, setFramesSent] = useState(0);
   const [lastServerMessage, setLastServerMessage] = useState<string>("");
   const [lastError, setLastError] = useState<string>("");
+
+  const computeNonLatinPct = useCallback((s: string) => {
+    const txt = s.trim();
+    if (txt.length === 0) return 0;
+    // Rough heuristic: count chars outside Latin + Latin-extended blocks.
+    let nonLatin = 0;
+    for (const ch of txt) {
+      const cp = ch.codePointAt(0) ?? 0;
+      if (cp > 0x024f) nonLatin += 1;
+    }
+    return (nonLatin / txt.length) * 100;
+  }, []);
 
   useEffect(() => {
     serverSessionIdRef.current = state.sessionId ?? null;
@@ -236,7 +279,66 @@ export function App() {
       if (uiTimerRef.current) window.clearInterval(uiTimerRef.current);
       uiTimerRef.current = window.setInterval(() => {
         setFramesSent(framesSentRef.current);
-        if (devMetricsEnabled) snapshotDevMetrics();
+        if (devMetricsEnabled) {
+          snapshotDevMetrics();
+
+          const ts = transcriptStateRef.current;
+          if (!ts) return;
+
+          const turns = Object.values(ts.turnsById);
+          const turnsWithSegs = turns.filter((t) => t.segmentOrder.length > 0);
+          const turnsWithSegments = turnsWithSegs.length;
+
+          let totalSegments = 0;
+          let maxSegsInTurn = 0;
+          let sumSegLen = 0;
+          let shortSegmentsLt3 = 0;
+
+          let sumNonLatinSegPct = 0;
+          let maxNonLatinSegPct = 0;
+
+          let sumNonLatinTurnPct = 0;
+          let maxNonLatinTurnPct = 0;
+
+          for (const turn of turnsWithSegs) {
+            const segCount = turn.segmentOrder.length;
+            totalSegments += segCount;
+            if (segCount > maxSegsInTurn) maxSegsInTurn = segCount;
+
+            let turnText = "";
+            for (const segId of turn.segmentOrder) {
+              const seg = turn.segmentsById[segId];
+              if (!seg) continue;
+              const t = seg.text.trim();
+              if (t.length < 3) shortSegmentsLt3 += 1;
+              sumSegLen += t.length;
+
+              const segNonLatin = computeNonLatinPct(t);
+              sumNonLatinSegPct += segNonLatin;
+              if (segNonLatin > maxNonLatinSegPct) maxNonLatinSegPct = segNonLatin;
+
+              turnText = turnText.length === 0 ? t : `${turnText} ${t}`;
+            }
+
+            const turnNonLatin = computeNonLatinPct(turnText);
+            sumNonLatinTurnPct += turnNonLatin;
+            if (turnNonLatin > maxNonLatinTurnPct) maxNonLatinTurnPct = turnNonLatin;
+          }
+
+          setDevChunking({
+            turnsWithSegments,
+            totalSegments,
+            segmentsPerTurnAvg:
+              turnsWithSegments > 0 ? totalSegments / turnsWithSegments : null,
+            segmentsPerTurnMax: turnsWithSegments > 0 ? maxSegsInTurn : null,
+            segmentLenCharsAvg: totalSegments > 0 ? sumSegLen / totalSegments : null,
+            shortSegmentsLt3,
+            nonLatinPctSegmentAvg: totalSegments > 0 ? sumNonLatinSegPct / totalSegments : null,
+            nonLatinPctSegmentMax: totalSegments > 0 ? maxNonLatinSegPct : null,
+            nonLatinPctTurnAvg: turnsWithSegments > 0 ? sumNonLatinTurnPct / turnsWithSegments : null,
+            nonLatinPctTurnMax: turnsWithSegments > 0 ? maxNonLatinTurnPct : null,
+          });
+        }
       }, 500);
 
       setStreaming(true);
@@ -390,6 +492,10 @@ export function App() {
   }, [state.status, wsState]);
 
   const fmtMs = useCallback((ms: number | null) => (ms === null ? "—" : `${ms} ms`), []);
+  const fmtNum = useCallback((n: number | null, digits = 2) => {
+    if (n === null) return "—";
+    return Number.isFinite(n) ? n.toFixed(digits) : "—";
+  }, []);
 
   const firstPartialLatencyMs =
     devMetrics.startMicClickAtMs !== null && devMetrics.firstSttPartialAtMs !== null
@@ -543,6 +649,62 @@ export function App() {
                   <button className="btn btnSmall" type="button" onClick={resetDevMetrics}>
                     Reset metrics
                   </button>
+                </div>
+              </div>
+            </details>
+          ) : null}
+
+          {devMetricsEnabled ? (
+            <details style={{ margin: "0 12px 12px" }}>
+              <summary style={{ cursor: "pointer", color: "rgba(229,231,235,0.78)" }}>
+                Dev: chunking quality metrics
+              </summary>
+              <div style={{ paddingTop: 10 }}>
+                <div
+                  style={{
+                    marginTop: 2,
+                    display: "grid",
+                    gridTemplateColumns: "260px 1fr",
+                    rowGap: 6,
+                  }}
+                >
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    Turns with segments
+                  </div>
+                  <div className="mono">{String(devChunking.turnsWithSegments)}</div>
+
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    Segments per turn (avg / max)
+                  </div>
+                  <div className="mono">
+                    {fmtNum(devChunking.segmentsPerTurnAvg, 2)} /{" "}
+                    {devChunking.segmentsPerTurnMax === null ? "—" : String(devChunking.segmentsPerTurnMax)}
+                  </div>
+
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    Avg segment length (chars)
+                  </div>
+                  <div className="mono">{fmtNum(devChunking.segmentLenCharsAvg, 1)}</div>
+
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    Very short segments (&lt;3 chars)
+                  </div>
+                  <div className="mono">{String(devChunking.shortSegmentsLt3)}</div>
+
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    Non‑Latin % per segment (avg / max)
+                  </div>
+                  <div className="mono">
+                    {fmtNum(devChunking.nonLatinPctSegmentAvg, 1)}% /{" "}
+                    {fmtNum(devChunking.nonLatinPctSegmentMax, 1)}%
+                  </div>
+
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    Non‑Latin % per turn (avg / max)
+                  </div>
+                  <div className="mono">
+                    {fmtNum(devChunking.nonLatinPctTurnAvg, 1)}% / {fmtNum(devChunking.nonLatinPctTurnMax, 1)}%
+                  </div>
                 </div>
               </div>
             </details>
