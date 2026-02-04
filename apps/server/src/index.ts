@@ -1,32 +1,12 @@
-/**
- * Placeholder server entrypoint.
- *
- * Agents will implement:
- * - WS server session lifecycle
- * - STT adapter
- * - Translation adapter
- *
- * Contracts are in `@livetranslate/shared`.
- */
-
-import { WebSocketServer } from "ws";
+import { createWsServer } from "./ws/server.js";
+import { registerOpenAiStt } from "./stt/registerOpenAiStt.js";
 
 const port = Number(process.env.PORT ?? 8787);
 
-const wss = new WebSocketServer({ port });
+const ws = createWsServer({ port });
 
-wss.on("connection", (socket) => {
-  socket.send(
-    JSON.stringify({
-      type: "server.error",
-      code: "not_implemented",
-      message:
-        "Server skeleton only. Implement session + STT + translation adapters.",
-      recoverable: false,
-    }),
-  );
-  socket.close();
-});
+// STT-only milestone: wire streaming transcription into the WS audio pipeline.
+registerOpenAiStt(ws);
 
 // eslint-disable-next-line no-console
 console.log(`WS server listening on ws://localhost:${port}`);

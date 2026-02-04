@@ -1,0 +1,235 @@
+.appRoot {
+  min-height: 100vh;
+  color: #0f172a;
+  background: #0b1020;
+  background: radial-gradient(1200px 600px at 20% -10%, #1f2a57 0%, rgba(31, 42, 87, 0) 60%),
+    radial-gradient(900px 700px at 90% 0%, #2b1f57 0%, rgba(43, 31, 87, 0) 55%),
+    #070a14;
+}
+
+.shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px 16px 48px;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: #e5e7eb;
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: rgba(229, 231, 235, 0.72);
+}
+
+.card {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.6);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
+}
+
+.controls {
+  padding: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.fieldLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(229, 231, 235, 0.7);
+}
+
+.input {
+  width: 320px;
+  max-width: 70vw;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(2, 6, 23, 0.75);
+  color: rgba(229, 231, 235, 0.92);
+  outline: none;
+}
+.input:focus {
+  border-color: rgba(96, 165, 250, 0.6);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+}
+
+.btn {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(30, 41, 59, 0.7);
+  color: rgba(229, 231, 235, 0.92);
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+}
+.btn:hover {
+  background: rgba(30, 41, 59, 0.9);
+}
+.btnPrimary {
+  border-color: rgba(96, 165, 250, 0.35);
+  background: rgba(37, 99, 235, 0.45);
+}
+.btnPrimary:hover {
+  background: rgba(37, 99, 235, 0.6);
+}
+.btnDanger {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(225, 29, 72, 0.32);
+}
+.btnDanger:hover {
+  background: rgba(225, 29, 72, 0.44);
+}
+.btnSmall {
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(2, 6, 23, 0.45);
+  color: rgba(229, 231, 235, 0.82);
+  font-size: 12px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.8);
+}
+.dotOk {
+  background: rgba(34, 197, 94, 0.9);
+}
+.dotWarn {
+  background: rgba(251, 191, 36, 0.9);
+}
+.dotBad {
+  background: rgba(248, 113, 113, 0.95);
+}
+
+.main {
+  margin-top: 12px;
+}
+
+.transcriptHeader {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px 12px 0;
+}
+
+.colHeader {
+  font-size: 12px;
+  color: rgba(229, 231, 235, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.colHeader strong {
+  color: rgba(229, 231, 235, 0.92);
+  font-weight: 700;
+}
+
+.turnList {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.turn {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.5);
+  overflow: hidden;
+}
+
+.turnMeta {
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  color: rgba(229, 231, 235, 0.78);
+  font-size: 12px;
+}
+
+.turnGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px;
+}
+
+.cell {
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  padding: 10px 12px;
+  min-height: 46px;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.original {
+  color: rgba(229, 231, 235, 0.92);
+}
+
+.translation {
+  color: rgba(191, 219, 254, 0.85);
+}
+
+.segPartial {
+  opacity: 0.75;
+  font-style: italic;
+}
+
+.segFinal {
+  opacity: 0.98;
+}
+
+.placeholder {
+  opacity: 0.6;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+}
+
+.errorBox {
+  margin: 0 12px 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  background: rgba(127, 29, 29, 0.25);
+  color: rgba(254, 226, 226, 0.9);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
