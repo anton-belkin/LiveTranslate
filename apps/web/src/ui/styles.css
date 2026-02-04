@@ -213,6 +213,17 @@
   opacity: 0.98;
 }
 
+.segList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.segLine {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .placeholder {
   opacity: 0.6;
 }

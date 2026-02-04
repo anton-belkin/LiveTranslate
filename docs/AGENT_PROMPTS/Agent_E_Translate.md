@@ -3,9 +3,6 @@
 ## Mission
 Translate finalized segments DE↔EN with streaming output and emit `translate.partial` / `translate.final` (and optionally `translate.revise` later).
 
-## Milestone focus
-**Milestone 2 (Translation)**: only start after Milestone 1 (STT-only into UI) is working.
-
 ## Allowed paths (hard)
 - `apps/server/**`
 
@@ -15,28 +12,22 @@ Translate finalized segments DE↔EN with streaming output and emit `translate.p
 
 ## Required reading
 - `docs/PRODUCT.md`
+- `docs/DELEGATIONS/README.md`
 - `docs/ESCALATIONS/README.md`
 - `packages/shared/src/protocol.ts`
 - `packages/shared/src/providers.ts`
+
+## Work intake (delegations)
+Only work on tasks assigned via `docs/DELEGATIONS/`. Before starting, check for any `DEL-*Agent_E-*` files with status `open`, mark them `in_progress`, and implement only that scope. When done, append a completion report and mark `completed`.
 
 ## Escalation process (no chat relay)
 If you need a gatekeeper decision or a contract change, create an escalation file under `docs/ESCALATIONS/` (see `docs/ESCALATIONS/README.md`).
 In the agent chat, post only: `Filed escalation docs/ESCALATIONS/<filename>; status=open; blocked until answered.`
 Do not paste escalation details into chat.
 
-## Requirements
-- Translation triggers on `stt.final` segments.
-- Determine direction:
-  - if `stt.final.lang` is present, use it
-  - otherwise do a lightweight detection (DE vs EN) before translating
-- Use a server-side LLM API with streaming (OpenAI Responses streaming is fine).
-- Emit streaming deltas with `translate.partial { textDelta }` and complete with `translate.final { text }`.
-- Keep context bounded (e.g., last N segments) to avoid context blow-up.
+## Notes
+- Your actual tasks and acceptance criteria are defined in `docs/DELEGATIONS/` files.
+- Do not start work without an explicit delegation.
 
-## Acceptance checklist
-- Streaming deltas arrive before final text for typical segments.
-- Correct routing DE→EN and EN→DE.
-- Failures emit `server.error` (recoverable when possible) and don’t crash the server.
 
-## Local test
-- With STT adapter active, speak German/English and verify both columns populate.
+

@@ -200,15 +200,32 @@ export function transcriptReducer(
           startMs: state.turnsById[msg.turnId]?.startMs ?? msg.startMs,
         });
         const turn = nextState.turnsById[msg.turnId];
+        const prevSeg = turn.segmentsById[msg.segmentId];
+
+        // If we already finalized this segment, ignore any later partials.
+        if (prevSeg?.isFinal && msg.type === "stt.partial") return nextState;
 
         const seg: Segment = {
           segmentId: msg.segmentId,
           lang,
           startMs: msg.startMs,
-          endMs: msg.type === "stt.final" ? msg.endMs : undefined,
+          endMs:
+            msg.type === "stt.final" ? msg.endMs : prevSeg?.isFinal ? prevSeg.endMs : undefined,
           text: msg.text,
-          isFinal: msg.type === "stt.final",
+          isFinal: msg.type === "stt.final" ? true : prevSeg?.isFinal ?? false,
         };
+
+        // Avoid re-render churn on duplicate partials.
+        if (
+          prevSeg &&
+          prevSeg.text === seg.text &&
+          prevSeg.isFinal === seg.isFinal &&
+          prevSeg.endMs === seg.endMs &&
+          prevSeg.startMs === seg.startMs &&
+          prevSeg.lang === seg.lang
+        ) {
+          return nextState;
+        }
 
         const updatedTurn = upsertSegment(turn, seg, true);
 

@@ -5,9 +5,14 @@ import {
   type SegmentationTuning,
 } from "@livetranslate/shared";
 import { uint8ArrayToBase64 } from "../util/base64.js";
+import { newId } from "../util/id.js";
 import { resamplePcm16MonoLinear } from "./resamplePcm16.js";
 
-const OPENAI_REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime";
+const DEFAULT_REALTIME_MODEL = "gpt-realtime";
+function getRealtimeUrl() {
+  const model = process.env.OPENAI_REALTIME_MODEL ?? DEFAULT_REALTIME_MODEL;
+  return `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
+}
 const OPENAI_INPUT_SAMPLE_RATE_HZ = 24_000 as const;
 
 type Emit = (msg: ServerToClientMessage) => void;
@@ -15,6 +20,12 @@ type Emit = (msg: ServerToClientMessage) => void;
 type ItemTiming = {
   startMs?: number;
   endMs?: number;
+};
+
+type SegmentMeta = {
+  turnId: string;
+  segmentStartMs: number;
+  segmentEndMs?: number;
 };
 
 type AdapterState = "idle" | "connecting" | "open" | "stopping" | "stopped";
@@ -27,15 +38,33 @@ export class OpenAIRealtimeTranscriptionAdapter {
   private readonly onError: (err: Error) => void;
   private readonly tuning: SegmentationTuning;
   private readonly transcriptionModel: string;
+  private sessionConfigured = false;
 
   private audioQueue: Array<{ msg: string; approxBytes: number }> = [];
   private queuedBytes = 0;
   private readonly maxQueuedBytes = 2 * 1024 * 1024; // 2MB
 
   private partialTextByItemId = new Map<string, string>();
-  private timingsByItemId = new Map<string, ItemTiming>();
-  private openTurns = new Set<string>();
+  private timingsByTurnId = new Map<string, ItemTiming>();
+  private segmentByItemId = new Map<string, SegmentMeta>();
+  private openTurns = new Set<string>(); // turnIds
+  private openSegmentsByTurnId = new Map<string, Set<string>>(); // turnId -> itemIds
   private maxTurnTimersByItemId = new Map<string, NodeJS.Timeout>();
+
+  private audioCursorSamples = 0;
+
+  private inSpeech = false;
+  private currentTurnId: string | null = null;
+  private lastCommittedBoundaryMs = 0;
+  private speechStartMs: number | null = null;
+  private speechEndMs: number | null = null;
+  private eagerCommitTimer: NodeJS.Timeout | null = null;
+  private finalizeTurnTimer: NodeJS.Timeout | null = null;
+  private lastCommitAt = 0;
+
+  private audioCursorNowMs() {
+    return Math.floor((this.audioCursorSamples * 1000) / OPENAI_INPUT_SAMPLE_RATE_HZ);
+  }
 
   constructor(args: {
     sessionId: string;
@@ -65,7 +94,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
 
     this.state = "connecting";
 
-    const ws = new WebSocket(OPENAI_REALTIME_URL, {
+    const ws = new WebSocket(getRealtimeUrl(), {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     this.ws = ws;
@@ -73,37 +102,39 @@ export class OpenAIRealtimeTranscriptionAdapter {
     ws.on("open", () => {
       if (this.state === "stopping" || this.state === "stopped") return;
       this.state = "open";
+      this.sessionConfigured = false;
 
       // Configure a transcription-only session.
       ws.send(
         JSON.stringify({
           type: "session.update",
           session: {
-            type: "transcription",
+            // Important: we keep the session type as `realtime` and enable input
+            // audio transcription, while disabling response creation. Some
+            // deployments reject switching a realtime session to `transcription`.
+            type: "realtime",
             audio: {
               input: {
                 format: { type: "audio/pcm", rate: OPENAI_INPUT_SAMPLE_RATE_HZ },
-                transcription: {
-                  model: this.transcriptionModel,
-                },
-                // Provider VAD boundaries are helpful; we tune silence gap to match shared defaults.
+                transcription: { model: this.transcriptionModel },
+                // Provider VAD boundaries are helpful; tune to shared defaults.
                 turn_detection: {
                   type: "server_vad",
                   silence_duration_ms: this.tuning.silenceGapMs,
-                  // Keep these conservative; callers can tune later.
                   threshold: 0.5,
                   prefix_padding_ms: 300,
-                  // For transcription-only, ensure we don't create model responses.
+                  // Critical: do not create model responses in this PoC.
                   create_response: false,
                   interrupt_response: false,
                 },
+                noise_reduction: { type: "near_field" },
               },
+              // We don't use output audio in this app.
+              output: { format: { type: "audio/pcm", rate: OPENAI_INPUT_SAMPLE_RATE_HZ }, voice: "alloy", speed: 1.0 },
             },
           },
         }),
       );
-
-      this.flushQueue();
     });
 
     ws.on("message", (data) => {
@@ -157,10 +188,15 @@ export class OpenAIRealtimeTranscriptionAdapter {
 
     const ws = this.ws;
     if (ws && ws.readyState === WebSocket.OPEN) {
-      // Backpressure: if we're falling behind, drop newest frames.
-      if (ws.bufferedAmount > this.maxQueuedBytes) return;
-      ws.send(msg);
-      return;
+      // Ensure session.update has been applied before sending audio.
+      if (this.sessionConfigured) {
+        // Backpressure: if we're falling behind, drop newest frames.
+        if (ws.bufferedAmount > this.maxQueuedBytes) return;
+        ws.send(msg);
+        this.audioCursorSamples += resampled.length;
+        return;
+      }
+      // fall through to queue while configuring
     }
 
     // Queue while connecting.
@@ -171,6 +207,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
     }
     this.audioQueue.push({ msg, approxBytes });
     this.queuedBytes += approxBytes;
+    this.audioCursorSamples += resampled.length;
   }
 
   async stop(args?: { reason?: string }) {
@@ -179,19 +216,20 @@ export class OpenAIRealtimeTranscriptionAdapter {
     this.clearAllTimers();
 
     // Flush any open turns that never completed.
-    for (const itemId of this.openTurns) {
-      const timing = this.timingsByItemId.get(itemId);
+    for (const turnId of this.openTurns) {
+      const timing = this.timingsByTurnId.get(turnId);
       const startMs = timing?.startMs ?? 0;
       const endMs = timing?.endMs ?? startMs;
       this.emit({
         type: "turn.final",
         sessionId: this.sessionId,
-        turnId: itemId,
+        turnId,
         startMs,
         endMs,
       });
     }
     this.openTurns.clear();
+    this.stopEagerCommit();
 
     const ws = this.ws;
     this.ws = null;
@@ -224,11 +262,24 @@ export class OpenAIRealtimeTranscriptionAdapter {
     const type = evt?.type as string | undefined;
     if (!type) return;
 
+    if (type === "session.updated") {
+      this.sessionConfigured = true;
+      this.flushQueue();
+      return;
+    }
+
     if (type === "error") {
       const message =
         evt?.error?.message ??
         evt?.error?.code ??
         "OpenAI realtime returned error";
+      const code = String(evt?.error?.code ?? "");
+      const lowerMsg = String(message).toLowerCase();
+      const isEmptyCommit =
+        code.toLowerCase().includes("empty") || lowerMsg.includes("empty");
+      // Expected sometimes when we eagerly commit while buffer is empty.
+      if (isEmptyCommit && Date.now() - this.lastCommitAt < 2000) return;
+
       this.onError(new Error(message));
       return;
     }
@@ -238,18 +289,30 @@ export class OpenAIRealtimeTranscriptionAdapter {
       const startMs = Number(evt.audio_start_ms ?? 0);
       if (!itemId) return;
 
-      this.timingsByItemId.set(itemId, { startMs });
-      this.partialTextByItemId.set(itemId, "");
+      this.inSpeech = true;
+      this.speechStartMs = startMs;
+      this.speechEndMs = null;
+      this.lastCommittedBoundaryMs = startMs;
 
-      if (!this.openTurns.has(itemId)) {
-        this.openTurns.add(itemId);
+      if (!this.currentTurnId) {
+        this.currentTurnId = newId("turn");
+      }
+
+      if (!this.timingsByTurnId.has(this.currentTurnId)) {
+        this.timingsByTurnId.set(this.currentTurnId, { startMs });
+      }
+
+      if (!this.openTurns.has(this.currentTurnId)) {
+        this.openTurns.add(this.currentTurnId);
         this.emit({
           type: "turn.start",
           sessionId: this.sessionId,
-          turnId: itemId,
+          turnId: this.currentTurnId,
           startMs,
         });
       }
+
+      this.startEagerCommit();
 
       // Force a boundary for very long speech: commit the buffer.
       const existing = this.maxTurnTimersByItemId.get(itemId);
@@ -257,6 +320,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
       const t = setTimeout(() => {
         const ws = this.ws;
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        this.lastCommitAt = Date.now();
         ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
       }, this.tuning.maxTurnMs);
       this.maxTurnTimersByItemId.set(itemId, t);
@@ -268,9 +332,53 @@ export class OpenAIRealtimeTranscriptionAdapter {
       const itemId = String(evt.item_id ?? "");
       const endMs = Number(evt.audio_end_ms ?? 0);
       if (!itemId) return;
-      const timing = this.timingsByItemId.get(itemId) ?? {};
-      timing.endMs = endMs;
-      this.timingsByItemId.set(itemId, timing);
+      this.inSpeech = false;
+      this.speechEndMs = endMs;
+      this.stopEagerCommit();
+
+      // Best-effort: commit once more to flush trailing audio for transcription.
+      const ws = this.ws;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        this.lastCommitAt = Date.now();
+        ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+      }
+
+      this.scheduleFinalizeTurn();
+      return;
+    }
+
+    // Each commit creates a new user audio item which will be transcribed.
+    // We map that provider `item_id` to { turnId, segmentId=item_id }.
+    if (type === "input_audio_buffer.committed") {
+      const itemId = String(evt.item_id ?? "");
+      if (!itemId) return;
+
+      // Ensure we have a turn (speech_started may not always be emitted).
+      if (!this.currentTurnId) {
+        this.currentTurnId = newId("turn");
+        const startMs = this.speechStartMs ?? this.lastCommittedBoundaryMs ?? 0;
+        this.timingsByTurnId.set(this.currentTurnId, { startMs });
+        this.openTurns.add(this.currentTurnId);
+        this.emit({
+          type: "turn.start",
+          sessionId: this.sessionId,
+          turnId: this.currentTurnId,
+          startMs,
+        });
+      }
+
+      const turnId = this.currentTurnId;
+      const segmentStartMs = this.lastCommittedBoundaryMs;
+      const segmentEndMs = this.audioCursorNowMs();
+      this.lastCommittedBoundaryMs = segmentEndMs;
+
+      this.segmentByItemId.set(itemId, { turnId, segmentStartMs, segmentEndMs });
+      this.partialTextByItemId.set(itemId, "");
+
+      const openSegs = this.openSegmentsByTurnId.get(turnId) ?? new Set<string>();
+      openSegs.add(itemId);
+      this.openSegmentsByTurnId.set(turnId, openSegs);
+
       return;
     }
 
@@ -279,19 +387,20 @@ export class OpenAIRealtimeTranscriptionAdapter {
       const delta = String(evt.delta ?? "");
       if (!itemId) return;
 
+      const seg = this.segmentByItemId.get(itemId);
+      if (!seg) return;
+
       const existing = this.partialTextByItemId.get(itemId) ?? "";
       const nextText = existing + delta;
       this.partialTextByItemId.set(itemId, nextText);
 
-      const timing = this.timingsByItemId.get(itemId) ?? {};
-      const startMs = timing.startMs ?? 0;
       this.emit({
         type: "stt.partial",
         sessionId: this.sessionId,
-        turnId: itemId,
+        turnId: seg.turnId,
         segmentId: itemId,
         text: nextText,
-        startMs,
+        startMs: seg.segmentStartMs,
       });
       return;
     }
@@ -301,38 +410,40 @@ export class OpenAIRealtimeTranscriptionAdapter {
       const transcript = String(evt.transcript ?? "");
       if (!itemId) return;
 
-      const timing = this.timingsByItemId.get(itemId) ?? {};
-      const startMs = timing.startMs ?? 0;
-      const endMs = timing.endMs ?? startMs;
+      const seg = this.segmentByItemId.get(itemId);
+      if (!seg) return;
+
+      const startMs = seg.segmentStartMs;
+      const endMs =
+        seg.segmentEndMs ??
+        this.speechEndMs ??
+        startMs;
 
       this.emit({
         type: "stt.final",
         sessionId: this.sessionId,
-        turnId: itemId,
+        turnId: seg.turnId,
         segmentId: itemId,
         text: transcript,
         startMs,
         endMs,
       });
 
-      // Ensure turn finalization happens after STT final.
-      if (this.openTurns.has(itemId)) {
-        this.emit({
-          type: "turn.final",
-          sessionId: this.sessionId,
-          turnId: itemId,
-          startMs,
-          endMs,
-        });
-        this.openTurns.delete(itemId);
-      }
-
       const timer = this.maxTurnTimersByItemId.get(itemId);
       if (timer) clearTimeout(timer);
       this.maxTurnTimersByItemId.delete(itemId);
 
       this.partialTextByItemId.delete(itemId);
-      this.timingsByItemId.delete(itemId);
+      this.segmentByItemId.delete(itemId);
+
+      const openSegs = this.openSegmentsByTurnId.get(seg.turnId);
+      if (openSegs) {
+        openSegs.delete(itemId);
+        if (openSegs.size === 0) this.openSegmentsByTurnId.delete(seg.turnId);
+      }
+
+      // If speech already ended, we can finalize once all segments complete.
+      if (!this.inSpeech) this.tryFinalizeTurnNow();
       return;
     }
 
@@ -347,6 +458,75 @@ export class OpenAIRealtimeTranscriptionAdapter {
   private clearAllTimers() {
     for (const t of this.maxTurnTimersByItemId.values()) clearTimeout(t);
     this.maxTurnTimersByItemId.clear();
+    this.stopEagerCommit();
+    if (this.finalizeTurnTimer) clearTimeout(this.finalizeTurnTimer);
+    this.finalizeTurnTimer = null;
+  }
+
+  private startEagerCommit() {
+    if (this.eagerCommitTimer) return;
+    // Commit periodically while in speech so transcription starts during speech.
+    this.eagerCommitTimer = setInterval(() => {
+      if (!this.inSpeech) return;
+      const ws = this.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!this.sessionConfigured) return;
+      this.lastCommitAt = Date.now();
+      ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+    }, 500);
+  }
+
+  private stopEagerCommit() {
+    if (!this.eagerCommitTimer) return;
+    clearInterval(this.eagerCommitTimer);
+    this.eagerCommitTimer = null;
+  }
+
+  private scheduleFinalizeTurn() {
+    if (!this.currentTurnId) return;
+    if (this.finalizeTurnTimer) clearTimeout(this.finalizeTurnTimer);
+
+    // Give the provider time to emit final transcription events.
+    this.finalizeTurnTimer = setTimeout(() => {
+      this.tryFinalizeTurnNow();
+    }, 1500);
+  }
+
+  private tryFinalizeTurnNow() {
+    const turnId = this.currentTurnId;
+    if (!turnId) return;
+    if (this.inSpeech) return;
+    const openSegs = this.openSegmentsByTurnId.get(turnId);
+    if (openSegs && openSegs.size > 0) return;
+
+    const timing = this.timingsByTurnId.get(turnId) ?? {};
+    const startMs = timing.startMs ?? this.speechStartMs ?? 0;
+    const endMs =
+      this.speechEndMs ??
+      this.audioCursorNowMs() ??
+      startMs;
+    timing.startMs = startMs;
+    timing.endMs = endMs;
+    this.timingsByTurnId.set(turnId, timing);
+
+    if (this.openTurns.has(turnId)) {
+      this.emit({
+        type: "turn.final",
+        sessionId: this.sessionId,
+        turnId,
+        startMs,
+        endMs,
+      });
+      this.openTurns.delete(turnId);
+    }
+
+    this.currentTurnId = null;
+    this.speechStartMs = null;
+    this.speechEndMs = null;
+    this.lastCommittedBoundaryMs = endMs;
+
+    if (this.finalizeTurnTimer) clearTimeout(this.finalizeTurnTimer);
+    this.finalizeTurnTimer = null;
   }
 }
 

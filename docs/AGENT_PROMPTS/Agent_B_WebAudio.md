@@ -3,9 +3,6 @@
 ## Mission
 Implement browser tab-audio capture and stream audio frames to the server over WebSocket using the shared protocol.
 
-## Milestone focus
-**Milestone 1 (STT-only)**: just get clean audio streaming (`audio.frame`) working end-to-end. Translation is out of scope.
-
 ## Allowed paths (hard)
 - `apps/web/**`
 
@@ -15,31 +12,21 @@ Implement browser tab-audio capture and stream audio frames to the server over W
 
 ## Required reading
 - `docs/PRODUCT.md`
+- `docs/DELEGATIONS/README.md`
 - `docs/ESCALATIONS/README.md`
 - `packages/shared/src/protocol.ts`
+
+## Work intake (delegations)
+Only work on tasks assigned via `docs/DELEGATIONS/`. Before starting, check for any `DEL-*Agent_B-*` files with status `open`, mark them `in_progress`, and implement only that scope. When done, append a completion report and mark `completed`.
 
 ## Escalation process (no chat relay)
 If you need a gatekeeper decision or a contract change, create an escalation file under `docs/ESCALATIONS/` (see `docs/ESCALATIONS/README.md`).
 In the agent chat, post only: `Filed escalation docs/ESCALATIONS/<filename>; status=open; blocked until answered.`
 Do not paste escalation details into chat.
 
-## Requirements
-- Capture meeting audio via microphone (default ingestion for this PoC):
-  - `navigator.mediaDevices.getUserMedia({ audio: true })`
-- (Optional later) support tab-audio capture for browser-based meetings:
-  - `navigator.mediaDevices.getDisplayMedia({ audio: true, video: false })`
-- Convert to **mono PCM16 little-endian**.
-- Target sample rate: **16 kHz** if feasible; otherwise document actual rate and resampling approach.
-- Send `audio.frame` messages to the server:
-  - include `sessionId`, `pcm16Base64`, `sampleRateHz`, `channels: 1`.
-- Implement Start/Stop UI controls (minimal is fine).
+## Notes
+- Your actual tasks and acceptance criteria are defined in `docs/DELEGATIONS/` files.
+- Do not start work without an explicit delegation.
 
-## Acceptance checklist
-- Start prompts the microphone permission dialog and begins streaming audio after permission.
-- Sends audio frames at ~20ms cadence (or best-effort with documented frame size).
-- Stop closes tracks and WS cleanly; restart works without page refresh.
 
-## Local test
-- Run server placeholder: `pnpm -C apps/server dev`
-- Run web: `pnpm -C apps/web dev`
-- Confirm WS connects and frames are sent (server may currently close; keep WS client robust/retry-ready).
+

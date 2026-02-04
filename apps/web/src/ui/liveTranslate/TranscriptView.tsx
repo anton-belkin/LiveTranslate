@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { TranscriptState } from "./store";
 import type { Turn } from "./store";
@@ -15,6 +15,24 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const prevCountRef = useRef(0);
+  const [stickToBottom, setStickToBottom] = useState(true);
+
+  const lastTurnId = state.turnOrder.length > 0 ? state.turnOrder[state.turnOrder.length - 1] : undefined;
+  const lastTurn = lastTurnId ? state.turnsById[lastTurnId] : undefined;
+
+  useEffect(() => {
+    const thresholdPx = 120;
+
+    const recompute = () => {
+      const atBottom =
+        window.innerHeight + window.scrollY >= document.body.scrollHeight - thresholdPx;
+      setStickToBottom(atBottom);
+    };
+
+    recompute();
+    window.addEventListener("scroll", recompute, { passive: true });
+    return () => window.removeEventListener("scroll", recompute);
+  }, []);
 
   useEffect(() => {
     const prev = prevCountRef.current;
@@ -24,6 +42,12 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
       bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
     }
   }, [turns.length]);
+
+  useEffect(() => {
+    // Keep new partial updates visible if the user is already near the bottom.
+    if (!stickToBottom) return;
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [stickToBottom, lastTurn]);
 
   return (
     <div className="card main">

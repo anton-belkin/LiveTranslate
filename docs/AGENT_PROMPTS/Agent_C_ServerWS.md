@@ -3,9 +3,6 @@
 ## Mission
 Implement a robust WebSocket server that accepts `client.hello` + `audio.frame` and routes events back to the client using the shared protocol.
 
-## Milestone focus
-**Milestone 1 (STT-only)**: implement WS session + routing so STT events (`turn.*`, `stt.*`) can be forwarded to the UI. Translation is out of scope.
-
 ## Allowed paths (hard)
 - `apps/server/**`
 
@@ -15,32 +12,21 @@ Implement a robust WebSocket server that accepts `client.hello` + `audio.frame` 
 
 ## Required reading
 - `docs/PRODUCT.md`
+- `docs/DELEGATIONS/README.md`
 - `docs/ESCALATIONS/README.md`
 - `packages/shared/src/protocol.ts`
+
+## Work intake (delegations)
+Only work on tasks assigned via `docs/DELEGATIONS/`. Before starting, check for any `DEL-*Agent_C-*` files with status `open`, mark them `in_progress`, and implement only that scope. When done, append a completion report and mark `completed`.
 
 ## Escalation process (no chat relay)
 If you need a gatekeeper decision or a contract change, create an escalation file under `docs/ESCALATIONS/` (see `docs/ESCALATIONS/README.md`).
 In the agent chat, post only: `Filed escalation docs/ESCALATIONS/<filename>; status=open; blocked until answered.`
 Do not paste escalation details into chat.
 
-## Requirements
-- WS server listens on `PORT` (default 8787).
-- On connection:
-  - parse incoming JSON messages
-  - validate with shared zod schemas
-  - require `client.hello` before accepting `audio.frame`
-  - reply with `server.ready` including `sessionId`
-- Session management:
-  - track per-connection session
-  - handle reconnects gracefully
-  - implement a backpressure policy (documented): drop vs queue frames
-- Provide an internal event bus / callback surface so STT + translation modules can emit `ServerToClientMessage` to the correct socket without importing UI concerns.
+## Notes
+- Your actual tasks and acceptance criteria are defined in `docs/DELEGATIONS/` files.
+- Do not start work without an explicit delegation.
 
-## Acceptance checklist
-- Invalid messages return `server.error` and do not crash server.
-- Clean stop on `client.stop`.
-- Code is structured so STT and translation can plug in without refactoring.
 
-## Local test
-- `pnpm -C apps/server dev`
-- Use a minimal WS client (browser or `wscat`) to send `client.hello` then fake `audio.frame`.
+

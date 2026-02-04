@@ -30,17 +30,16 @@ function Segments({ turn, lang }: { turn: Turn; lang: Lang }) {
   if (segs.length === 0) return null;
 
   return (
-    <>
-      {segs.map((seg, idx) => (
-        <span
-          key={seg.segmentId}
-          className={seg.isFinal ? "segFinal" : "segPartial"}
-        >
-          {idx === 0 ? "" : " "}
-          {seg.text}
-        </span>
-      ))}
-    </>
+    <div className="segList">
+      {segs.map((seg) => {
+        const showText = seg.isFinal ? seg.text : seg.text.endsWith("…") ? seg.text : `${seg.text}…`;
+        return (
+          <div key={seg.segmentId} className={`segLine ${seg.isFinal ? "segFinal" : "segPartial"}`}>
+            {showText}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

@@ -9,25 +9,20 @@ After integration is working end-to-end, tune latency and add lightweight, devel
 
 ## Required reading
 - `docs/PRODUCT.md`
+- `docs/DELEGATIONS/README.md`
 - `docs/ESCALATIONS/README.md`
 - `packages/shared/src/protocol.ts`
 - `packages/shared/src/segmentation.ts`
 - `docs/ARCHITECTURE.md`
+
+## Work intake (delegations)
+Only work on tasks assigned via `docs/DELEGATIONS/`. Before starting, check for any `DEL-*Agent_G-*` files with status `open`, mark them `in_progress`, and implement only that scope. When done, append a completion report and mark `completed`.
 
 ## Escalation process (no chat relay)
 If you need a gatekeeper decision or a contract change, create an escalation file under `docs/ESCALATIONS/` (see `docs/ESCALATIONS/README.md`).
 In the agent chat, post only: `Filed escalation docs/ESCALATIONS/<filename>; status=open; blocked until answered.`
 Do not paste escalation details into chat.
 
-## Tasks
-- Tune audio frame size / cadence if needed.
-- Tune turn segmentation thresholds (`silenceGapMs`, `maxTurnMs`) and document defaults.
-- Add metrics:
-  - client: capture time from `audio.frame.clientTimestampMs` to first `stt.partial` and to `translate.final`
-  - server: log per-turn processing time
-- Add safe retry logic where helpful (WS reconnect, provider transient errors).
-
-## Acceptance checklist
-- Metrics are visible (console or small debug panel) and can be toggled.
-- Latency improves or remains stable; no regressions in stability.
-- Changes are localized and documented.
+## Notes
+- Your actual tasks and acceptance criteria are defined in `docs/DELEGATIONS/` files.
+- Do not start “general polishing” without an explicit delegation.

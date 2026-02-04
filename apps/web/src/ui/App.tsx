@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useReducer, useState } from "react";
 
-import { safeParseServerMessage } from "@livetranslate/shared";
+import { safeParseServerMessage, type ServerToClientMessage } from "@livetranslate/shared";
 
 import { startMicStreamer, type MicStreamerHandle, type Pcm16Frame } from "../audio/micStreamer";
 import { base64FromArrayBuffer } from "../lib/base64";
@@ -39,6 +39,47 @@ export function App() {
   const framesSentRef = useRef(0);
   const uiTimerRef = useRef<number | null>(null);
 
+  type DevLatencyMetrics = {
+    startMicClickAtMs: number | null;
+    firstSttPartialAtMs: number | null;
+    lastClientFrameSentAtMs: number | null;
+    sttPartialCount: number;
+    lastSttPartialAtMs: number | null;
+    lastAudioAgeAtSttPartialMs: number | null;
+  };
+
+  const devMetricsEnabled = import.meta.env.DEV;
+
+  const metricsRef = useRef<DevLatencyMetrics>({
+    startMicClickAtMs: null,
+    firstSttPartialAtMs: null,
+    lastClientFrameSentAtMs: null,
+    sttPartialCount: 0,
+    lastSttPartialAtMs: null,
+    lastAudioAgeAtSttPartialMs: null,
+  });
+
+  const [devMetrics, setDevMetrics] = useState(() => ({
+    nowMs: Date.now(),
+    ...metricsRef.current,
+  }));
+
+  const snapshotDevMetrics = useCallback(() => {
+    setDevMetrics({ nowMs: Date.now(), ...metricsRef.current });
+  }, []);
+
+  const resetDevMetrics = useCallback(() => {
+    metricsRef.current = {
+      startMicClickAtMs: null,
+      firstSttPartialAtMs: null,
+      lastClientFrameSentAtMs: null,
+      sttPartialCount: 0,
+      lastSttPartialAtMs: null,
+      lastAudioAgeAtSttPartialMs: null,
+    };
+    snapshotDevMetrics();
+  }, [snapshotDevMetrics]);
+
   const [streaming, setStreaming] = useState(false);
   const [wsState, setWsState] = useState<WsClientState>("idle");
   const [status, setStatus] = useState<string>("Idle");
@@ -74,6 +115,26 @@ export function App() {
 
         const res = safeParseServerMessage(msg);
         if (res.success) {
+          if (devMetricsEnabled) {
+            const m = res.data as ServerToClientMessage;
+            if (m.type === "stt.partial") {
+              const now = Date.now();
+              const mr = metricsRef.current;
+              mr.sttPartialCount += 1;
+              mr.lastSttPartialAtMs = now;
+              mr.lastAudioAgeAtSttPartialMs =
+                mr.lastClientFrameSentAtMs !== null ? now - mr.lastClientFrameSentAtMs : null;
+
+              if (mr.firstSttPartialAtMs === null && mr.startMicClickAtMs !== null) {
+                mr.firstSttPartialAtMs = now;
+                console.info("[metrics] first stt.partial", {
+                  msFromStart: now - mr.startMicClickAtMs,
+                  audioAgeAtPartialMs: mr.lastAudioAgeAtSttPartialMs,
+                });
+                snapshotDevMetrics();
+              }
+            }
+          }
           dispatch({ type: "server.message", message: res.data });
         }
       },
@@ -82,7 +143,7 @@ export function App() {
 
     wsRef.current = ws;
     ws.connect();
-  }, [state.url]);
+  }, [devMetricsEnabled, snapshotDevMetrics, state.url]);
 
   const disconnectWs = useCallback(() => {
     wsRef.current?.close();
@@ -108,13 +169,20 @@ export function App() {
     micRef.current = null;
     await mic?.stop();
 
+    if (devMetricsEnabled) snapshotDevMetrics();
     setStatus("Stopped.");
-  }, [streaming]);
+  }, [devMetricsEnabled, snapshotDevMetrics, streaming]);
 
   const startAudio = useCallback(async () => {
     if (streaming) return;
     setLastError("");
     setStatus("Preparing…");
+
+    if (devMetricsEnabled) {
+      resetDevMetrics();
+      metricsRef.current.startMicClickAtMs = Date.now();
+      snapshotDevMetrics();
+    }
 
     // Ensure we have a WS client (it can reconnect and will drop frames while down).
     if (!wsRef.current) connectWs();
@@ -147,6 +215,8 @@ export function App() {
           const currentSid = serverSessionIdRef.current;
           if (!currentSid) return;
           framesSentRef.current += 1;
+          const ts = Date.now();
+          if (devMetricsEnabled) metricsRef.current.lastClientFrameSentAtMs = ts;
           wsRef.current?.sendJson({
             type: "audio.frame",
             sessionId: currentSid,
@@ -154,7 +224,7 @@ export function App() {
             format: "pcm_s16le",
             sampleRateHz: frame.sampleRateHz,
             channels: 1,
-            clientTimestampMs: Date.now(),
+            clientTimestampMs: ts,
           });
         },
       });
@@ -166,6 +236,7 @@ export function App() {
       if (uiTimerRef.current) window.clearInterval(uiTimerRef.current);
       uiTimerRef.current = window.setInterval(() => {
         setFramesSent(framesSentRef.current);
+        if (devMetricsEnabled) snapshotDevMetrics();
       }, 500);
 
       setStreaming(true);
@@ -175,7 +246,13 @@ export function App() {
       setLastError(msg);
       setStatus("Failed to start.");
     }
-  }, [connectWs, streaming]);
+  }, [
+    connectWs,
+    devMetricsEnabled,
+    resetDevMetrics,
+    snapshotDevMetrics,
+    streaming,
+  ]);
 
   const mockTimerRef = useRef<number | null>(null);
 
@@ -312,6 +389,16 @@ export function App() {
     );
   }, [state.status, wsState]);
 
+  const fmtMs = useCallback((ms: number | null) => (ms === null ? "—" : `${ms} ms`), []);
+
+  const firstPartialLatencyMs =
+    devMetrics.startMicClickAtMs !== null && devMetrics.firstSttPartialAtMs !== null
+      ? devMetrics.firstSttPartialAtMs - devMetrics.startMicClickAtMs
+      : null;
+
+  const audioAgeNowMs =
+    devMetrics.lastClientFrameSentAtMs !== null ? devMetrics.nowMs - devMetrics.lastClientFrameSentAtMs : null;
+
   return (
     <div className="appRoot">
       <div className="shell">
@@ -416,6 +503,50 @@ export function App() {
               ) : null}
             </div>
           </details>
+
+          {devMetricsEnabled ? (
+            <details style={{ margin: "0 12px 12px" }}>
+              <summary style={{ cursor: "pointer", color: "rgba(229,231,235,0.78)" }}>
+                Dev: STT latency metrics
+              </summary>
+              <div style={{ paddingTop: 10 }}>
+                <div
+                  style={{
+                    marginTop: 2,
+                    display: "grid",
+                    gridTemplateColumns: "260px 1fr",
+                    rowGap: 6,
+                  }}
+                >
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    Time to first <span className="mono">stt.partial</span>
+                  </div>
+                  <div className="mono">{fmtMs(firstPartialLatencyMs)}</div>
+
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    <span className="mono">stt.partial</span> count
+                  </div>
+                  <div className="mono">{String(devMetrics.sttPartialCount)}</div>
+
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    Audio age now (<span className="mono">now - lastClientTimestampMsSent</span>)
+                  </div>
+                  <div className="mono">{fmtMs(audioAgeNowMs)}</div>
+
+                  <div style={{ opacity: 0.7, color: "rgba(229,231,235,0.75)" }}>
+                    Audio age at last <span className="mono">stt.partial</span> receive
+                  </div>
+                  <div className="mono">{fmtMs(devMetrics.lastAudioAgeAtSttPartialMs)}</div>
+                </div>
+
+                <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button className="btn btnSmall" type="button" onClick={resetDevMetrics}>
+                    Reset metrics
+                  </button>
+                </div>
+              </div>
+            </details>
+          ) : null}
         </div>
 
         <TranscriptView state={state} />
