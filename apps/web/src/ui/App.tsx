@@ -378,31 +378,36 @@ export function App() {
     });
 
     const mkTurn = (ix: number) => `turn_${now}_${ix}`;
-    const mkSeg = (ix: number) => `seg_${now}_${ix}`;
-
     const script = [
       {
         turnId: mkTurn(1),
         lang: "de" as const,
         text:
           "Hallo zusammen, wir starten jetzt. Ich fasse kurz die Agenda für heute zusammen.",
+        translationText:
+          "Hello everyone, we’re starting now. I’ll briefly summarize today’s agenda.",
       },
       {
         turnId: mkTurn(2),
         lang: "en" as const,
         text:
           "Sounds good. Could you also include the timeline and the next steps after the meeting?",
+        translationText:
+          "Klingt gut. Könntest du auch den Zeitplan und die nächsten Schritte nach dem Meeting nennen?",
       },
       {
         turnId: mkTurn(3),
         lang: "de" as const,
         text:
           "Ja, klar. Erstens Statusupdate, zweitens Risiken, drittens Entscheidungen und To-dos.",
+        translationText:
+          "Yes, of course. First, status update; second, risks; third, decisions and action items.",
       },
     ];
 
     let step = 0;
     let wordIndex = 0;
+    let transWordIndex = 0;
     let activeTurnStart = 0;
 
     const tick = () => {
@@ -413,7 +418,8 @@ export function App() {
       }
 
       const startMs = activeTurnStart || 0;
-      const segmentId = mkSeg(step + 1);
+      // Use `segmentId === turnId` so UI can derive turn.lang (matches server stitching mode).
+      const segmentId = entry.turnId;
 
       if (wordIndex === 0) {
         dispatch({
@@ -444,6 +450,30 @@ export function App() {
         },
       });
 
+      // Stream translation deltas.
+      const trWords = entry.translationText.split(" ");
+      const nextTransWordIndex = Math.min(transWordIndex + 2, trWords.length);
+      const prevTrans = trWords.slice(0, transWordIndex).join(" ");
+      const nextTrans = trWords.slice(0, nextTransWordIndex).join(" ");
+      const delta =
+        prevTrans.length === 0 ? nextTrans : nextTrans.length > prevTrans.length ? nextTrans.slice(prevTrans.length) : "";
+
+      if (delta.trim().length > 0) {
+        dispatch({
+          type: "server.message",
+          message: {
+            type: "translate.partial",
+            sessionId,
+            turnId: entry.turnId,
+            segmentId,
+            from: entry.lang,
+            to: entry.lang === "de" ? "en" : "de",
+            textDelta: delta,
+          },
+        });
+      }
+      transWordIndex = nextTransWordIndex;
+
       if (wordIndex >= words.length) {
         const endMs = startMs + 2500 + step * 400;
 
@@ -464,6 +494,19 @@ export function App() {
         dispatch({
           type: "server.message",
           message: {
+            type: "translate.final",
+            sessionId,
+            turnId: entry.turnId,
+            segmentId,
+            from: entry.lang,
+            to: entry.lang === "de" ? "en" : "de",
+            text: entry.translationText,
+          },
+        });
+
+        dispatch({
+          type: "server.message",
+          message: {
             type: "turn.final",
             sessionId,
             turnId: entry.turnId,
@@ -474,6 +517,7 @@ export function App() {
 
         step += 1;
         wordIndex = 0;
+        transWordIndex = 0;
         activeTurnStart = endMs + 200;
       }
     };

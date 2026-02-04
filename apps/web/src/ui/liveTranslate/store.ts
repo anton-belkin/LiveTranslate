@@ -10,22 +10,40 @@ export type ConnectionStatus =
 
 export type Segment = {
   segmentId: string;
-  lang: Lang;
+  lang?: Lang;
   startMs: number;
   endMs?: number;
   text: string;
   isFinal: boolean;
 };
 
+export type TurnTranslation = {
+  segmentId: string;
+  from: Lang;
+  to: Lang;
+  text: string;
+  isFinal: boolean;
+  /**
+   * Used only to ignore duplicate `translate.partial` deltas.
+   */
+  lastDelta?: string;
+};
+
 export type Turn = {
   turnId: string;
   sessionId?: string;
   speakerId?: string;
+  /**
+   * Turn language derived from `stt.*.lang` when `segmentId === turnId`.
+   * Missing/unknown stays undefined.
+   */
+  lang?: Lang;
   startMs?: number;
   endMs?: number;
   isFinal: boolean;
   segmentsById: Record<string, Segment>;
   segmentOrder: string[];
+  translation?: TurnTranslation;
 };
 
 export type TranscriptState = {
@@ -194,7 +212,7 @@ export function transcriptReducer(
       }
 
       if (msg.type === "stt.partial" || msg.type === "stt.final") {
-        const lang: Lang = msg.lang ?? "de";
+        const lang: Lang | undefined = msg.lang;
         const nextState = ensureTurn(state, msg.turnId, {
           sessionId: msg.sessionId,
           startMs: state.turnsById[msg.turnId]?.startMs ?? msg.startMs,
@@ -205,9 +223,12 @@ export function transcriptReducer(
         // If we already finalized this segment, ignore any later partials.
         if (prevSeg?.isFinal && msg.type === "stt.partial") return nextState;
 
+        const nextTurnLang =
+          msg.segmentId === msg.turnId && lang ? lang : turn.lang;
+
         const seg: Segment = {
           segmentId: msg.segmentId,
-          lang,
+          lang: lang ?? prevSeg?.lang,
           startMs: msg.startMs,
           endMs:
             msg.type === "stt.final" ? msg.endMs : prevSeg?.isFinal ? prevSeg.endMs : undefined,
@@ -231,11 +252,139 @@ export function transcriptReducer(
 
         return {
           ...nextState,
+          turnsById: {
+            ...nextState.turnsById,
+            [msg.turnId]: { ...updatedTurn, lang: nextTurnLang },
+          },
+        };
+      }
+
+      if (msg.type === "translate.partial") {
+        // Scope: stitched translation only.
+        if (msg.segmentId !== msg.turnId) return state;
+        if (msg.textDelta.length === 0) return state;
+
+        const nextState = ensureTurn(state, msg.turnId, {
+          sessionId: msg.sessionId,
+        });
+        const turn = nextState.turnsById[msg.turnId];
+        const prev = turn.translation;
+
+        // Ignore exact duplicate deltas.
+        if (
+          prev &&
+          prev.segmentId === msg.segmentId &&
+          prev.from === msg.from &&
+          prev.to === msg.to &&
+          prev.lastDelta === msg.textDelta
+        ) {
+          return nextState;
+        }
+
+        const nextText =
+          prev &&
+          prev.segmentId === msg.segmentId &&
+          prev.from === msg.from &&
+          prev.to === msg.to
+            ? prev.text + msg.textDelta
+            : msg.textDelta;
+
+        if (prev?.text === nextText && prev.isFinal === false) return nextState;
+
+        const updatedTurn: Turn = {
+          ...turn,
+          translation: {
+            segmentId: msg.segmentId,
+            from: msg.from,
+            to: msg.to,
+            text: nextText,
+            isFinal: false,
+            lastDelta: msg.textDelta,
+          },
+        };
+
+        return {
+          ...nextState,
           turnsById: { ...nextState.turnsById, [msg.turnId]: updatedTurn },
         };
       }
 
-      // Translation events exist in the protocol, but Milestone 1 stubs them out.
+      if (msg.type === "translate.final") {
+        // Scope: stitched translation only.
+        if (msg.segmentId !== msg.turnId) return state;
+
+        const nextState = ensureTurn(state, msg.turnId, {
+          sessionId: msg.sessionId,
+        });
+        const turn = nextState.turnsById[msg.turnId];
+        const prev = turn.translation;
+
+        if (
+          prev &&
+          prev.segmentId === msg.segmentId &&
+          prev.from === msg.from &&
+          prev.to === msg.to &&
+          prev.text === msg.text &&
+          prev.isFinal
+        ) {
+          return nextState;
+        }
+
+        const updatedTurn: Turn = {
+          ...turn,
+          translation: {
+            segmentId: msg.segmentId,
+            from: msg.from,
+            to: msg.to,
+            text: msg.text,
+            isFinal: true,
+          },
+        };
+
+        return {
+          ...nextState,
+          turnsById: { ...nextState.turnsById, [msg.turnId]: updatedTurn },
+        };
+      }
+
+      if (msg.type === "translate.revise") {
+        // Scope: stitched translation only.
+        if (msg.segmentId !== msg.turnId) return state;
+
+        const nextState = ensureTurn(state, msg.turnId, {
+          sessionId: msg.sessionId,
+        });
+        const turn = nextState.turnsById[msg.turnId];
+        const prev = turn.translation;
+
+        if (
+          prev &&
+          prev.segmentId === msg.segmentId &&
+          prev.from === msg.from &&
+          prev.to === msg.to &&
+          prev.text === msg.fullText &&
+          prev.isFinal === false
+        ) {
+          return nextState;
+        }
+
+        const updatedTurn: Turn = {
+          ...turn,
+          translation: {
+            segmentId: msg.segmentId,
+            from: msg.from,
+            to: msg.to,
+            text: msg.fullText,
+            isFinal: false,
+          },
+        };
+
+        return {
+          ...nextState,
+          turnsById: { ...nextState.turnsById, [msg.turnId]: updatedTurn },
+        };
+      }
+
       return state;
     }
   }

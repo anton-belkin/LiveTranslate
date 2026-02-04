@@ -56,6 +56,9 @@ export class OpenAIRealtimeTranscriptionAdapter {
   private rollingInFlight = false;
   private rollingFinalizeQueued = false;
   private turnDraftText = "";
+  private turnLang: "de" | "en" | undefined = undefined;
+  private langCandidate: "de" | "en" | undefined = undefined;
+  private langCandidateCount = 0;
 
   // Audio buffers (24kHz mono PCM16)
   private preSpeechChunks: Int16Array[] = [];
@@ -90,6 +93,44 @@ export class OpenAIRealtimeTranscriptionAdapter {
     const stableLimit = Math.max(0, prev.length - this.rollingCfg.stableTailChars);
     const stableLen = Math.min(lcp, stableLimit);
     return prev.slice(0, stableLen) + cleanedNext.slice(stableLen);
+  }
+
+  private resetTurnLang() {
+    this.turnLang = undefined;
+    this.langCandidate = undefined;
+    this.langCandidateCount = 0;
+  }
+
+  private maybeUpdateLangFromResult(args: {
+    text: string;
+    apiLanguage?: string;
+  }) {
+    const text = args.text.trim();
+    if (text.length < 30) return; // avoid flip-flopping on tiny texts
+
+    const detected = detectDeEn({
+      apiLanguage: args.apiLanguage,
+      text,
+    });
+    if (!detected) return;
+
+    if (this.turnLang === detected) {
+      this.langCandidate = detected;
+      this.langCandidateCount = 0;
+      return;
+    }
+
+    if (this.langCandidate !== detected) {
+      this.langCandidate = detected;
+      this.langCandidateCount = 1;
+      return;
+    }
+
+    this.langCandidateCount += 1;
+    if (this.langCandidateCount >= 2) {
+      this.turnLang = detected;
+      this.langCandidateCount = 0;
+    }
   }
 
   constructor(args: {
@@ -366,6 +407,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
       this.speechEndMs = null;
       this.currentTurnId = newId("turn");
       this.turnDraftText = "";
+      this.resetTurnLang();
       this.turnChunks = [];
       this.turnSamples = 0;
 
@@ -458,7 +500,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
         pcm16: windowPcm,
         sampleRateHz: OPENAI_INPUT_SAMPLE_RATE_HZ,
       });
-      const { text } = await openaiTranscribeWav({
+      const { text, language } = await openaiTranscribeWav({
         apiKey,
         wavBytes,
         model: this.transcriptionModel,
@@ -469,6 +511,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
 
       const nextDraft = this.stabilizeDraft(this.turnDraftText, text);
       this.turnDraftText = nextDraft;
+      this.maybeUpdateLangFromResult({ text: nextDraft, apiLanguage: language });
 
       const timing = this.timingsByTurnId.get(turnId) ?? {};
       const startMs = timing.startMs ?? this.speechStartMs ?? 0;
@@ -477,6 +520,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
         sessionId: this.sessionId,
         turnId,
         segmentId: turnId,
+        lang: this.turnLang,
         text: nextDraft,
         startMs,
       });
@@ -519,12 +563,16 @@ export class OpenAIRealtimeTranscriptionAdapter {
             pcm16: windowPcm,
             sampleRateHz: OPENAI_INPUT_SAMPLE_RATE_HZ,
           });
-          const { text } = await openaiTranscribeWav({
+          const { text, language } = await openaiTranscribeWav({
             apiKey,
             wavBytes,
             model: this.transcriptionModel,
           });
           this.turnDraftText = this.sanitizeText(text).replace(/\s+/g, " ").trim();
+          this.maybeUpdateLangFromResult({
+            text: this.turnDraftText,
+            apiLanguage: language,
+          });
         }
       } catch (err) {
         this.onError(err instanceof Error ? err : new Error(String(err)));
@@ -537,6 +585,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
       sessionId: this.sessionId,
       turnId,
       segmentId: turnId,
+      lang: this.turnLang,
       text: this.turnDraftText,
       startMs,
       endMs,
@@ -560,6 +609,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
     this.turnChunks = [];
     this.turnSamples = 0;
     this.turnDraftText = "";
+    this.resetTurnLang();
   }
 
   private maybeForceTurnCut() {
@@ -590,6 +640,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
       sessionId: this.sessionId,
       turnId: oldTurnId,
       segmentId: oldTurnId,
+      lang: this.turnLang,
       text: this.turnDraftText,
       startMs,
       endMs,
@@ -614,6 +665,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
     );
     this.currentTurnId = newTurnId;
     this.turnDraftText = "";
+    this.resetTurnLang();
     this.turnChunks = [];
     this.turnSamples = 0;
     if (overlap.length > 0) this.appendToTurn(overlap);
@@ -707,5 +759,67 @@ function longestCommonPrefixLength(a: string, b: string) {
 function clampNumber(n: number, min: number, max: number) {
   if (!Number.isFinite(n)) return min;
   return Math.max(min, Math.min(max, n));
+}
+
+function detectDeEn(args: { apiLanguage?: string; text: string }): "de" | "en" | undefined {
+  const api = (args.apiLanguage ?? "").toLowerCase();
+  if (api === "de" || api.startsWith("de-")) return "de";
+  if (api === "en" || api.startsWith("en-")) return "en";
+
+  const t = args.text.toLowerCase();
+
+  // Strong German signal (umlauts/ß).
+  if (/[äöüß]/i.test(args.text)) return "de";
+
+  const deWords = [
+    " und ",
+    " ich ",
+    " nicht ",
+    " das ",
+    " ist ",
+    " ein ",
+    " eine ",
+    " wir ",
+    " sie ",
+    " aber ",
+    " schon ",
+    " noch ",
+    " kann ",
+    " bitte ",
+    " danke ",
+    " weil ",
+    " doch ",
+  ];
+  const enWords = [
+    " the ",
+    " and ",
+    " i ",
+    " you ",
+    " not ",
+    " this ",
+    " that ",
+    " is ",
+    " are ",
+    " to ",
+    " of ",
+    " in ",
+    " we ",
+    " they ",
+    " but ",
+    " please ",
+    " thanks ",
+    " because ",
+  ];
+
+  const padded = ` ${t.replace(/\s+/g, " ").trim()} `;
+  let deScore = 0;
+  let enScore = 0;
+  for (const w of deWords) if (padded.includes(w)) deScore += 1;
+  for (const w of enWords) if (padded.includes(w)) enScore += 1;
+
+  if (deScore === enScore) return undefined;
+  const diff = Math.abs(deScore - enScore);
+  if (diff < 2) return undefined; // low confidence
+  return deScore > enScore ? "de" : "en";
 }
 

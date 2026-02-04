@@ -18,7 +18,9 @@ function Segments({ turn, lang }: { turn: Turn; lang: Lang }) {
     for (const segmentId of turn.segmentOrder) {
       const seg = turn.segmentsById[segmentId];
       if (!seg) continue;
-      if (seg.lang !== lang) continue;
+      // For column placement we use `turn.lang` (turn-level). We still prefer
+      // segment language when present to avoid mixing if the server emits both.
+      if (seg.lang && seg.lang !== lang) continue;
       const txt = seg.text?.trim();
       if (!txt) continue;
 
@@ -47,24 +49,28 @@ function Segments({ turn, lang }: { turn: Turn; lang: Lang }) {
 }
 
 export const TurnBlock = memo(function TurnBlock({ turn }: { turn: Turn }) {
-  const hasDe = useMemo(() => {
+  const turnLang: Lang | undefined = turn.lang;
+  const placement: Lang = turnLang ?? "de";
+  const hasText = useMemo(() => {
     for (const segmentId of turn.segmentOrder) {
       const seg = turn.segmentsById[segmentId];
-      if (seg?.lang === "de" && seg.text) return true;
+      if (seg?.text?.trim()) return true;
     }
     return false;
   }, [turn.segmentOrder, turn.segmentsById]);
 
-  const hasEn = useMemo(() => {
-    for (const segmentId of turn.segmentOrder) {
-      const seg = turn.segmentsById[segmentId];
-      if (seg?.lang === "en" && seg.text) return true;
-    }
-    return false;
-  }, [turn.segmentOrder, turn.segmentsById]);
+  const showInDe = placement === "de";
+  const showInEn = placement === "en";
 
-  const dePlaceholder = !hasDe && hasEn;
-  const enPlaceholder = !hasEn && hasDe;
+  const translation = turn.translation;
+  const translationNode = useMemo(() => {
+    if (!translation?.text?.trim()) return null;
+    return (
+      <div className="segParagraph segFinal">
+        {translation.text}
+      </div>
+    );
+  }, [translation]);
 
   return (
     <div className="turn">
@@ -92,25 +98,27 @@ export const TurnBlock = memo(function TurnBlock({ turn }: { turn: Turn }) {
 
       <div className="turnGrid">
         <div className="cell original">
-          {dePlaceholder ? (
-            <span className="placeholder">Translation pending…</span>
+          {showInDe ? (
+            hasText ? (
+              <Segments turn={turn} lang={turnLang ?? "de"} />
+            ) : (
+              <span className="placeholder">—</span>
+            )
           ) : (
-            <Segments turn={turn} lang="de" />
+            translationNode ?? <span className="placeholder">Translation pending…</span>
           )}
-          {!dePlaceholder && !hasDe ? (
-            <span className="placeholder">—</span>
-          ) : null}
         </div>
 
         <div className="cell translation">
-          {enPlaceholder ? (
-            <span className="placeholder">Translation pending…</span>
+          {showInEn ? (
+            hasText ? (
+              <Segments turn={turn} lang={turnLang ?? "en"} />
+            ) : (
+              <span className="placeholder">—</span>
+            )
           ) : (
-            <Segments turn={turn} lang="en" />
+            translationNode ?? <span className="placeholder">Translation pending…</span>
           )}
-          {!enPlaceholder && !hasEn ? (
-            <span className="placeholder">—</span>
-          ) : null}
         </div>
       </div>
     </div>

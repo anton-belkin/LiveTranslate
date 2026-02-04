@@ -1,6 +1,7 @@
 import type { WsServerApi } from "../ws/server.js";
 import { DEFAULT_SEGMENTATION_TUNING } from "@livetranslate/shared";
 import { base64ToUint8Array } from "../util/base64.js";
+import { createOpenAiTranslator } from "../translate/openaiTranslator.js";
 import { OpenAIRealtimeTranscriptionAdapter } from "./openaiRealtimeTranscriptionAdapter.js";
 
 const DEFAULT_IDLE_STOP_MS = 30_000;
@@ -21,6 +22,7 @@ type Entry = {
  */
 export function registerOpenAiStt(ws: WsServerApi) {
   const entries = new Map<string, Entry>();
+  const translator = createOpenAiTranslator(ws);
 
   function ensureEntry(sessionId: string) {
     const existing = entries.get(sessionId);
@@ -29,6 +31,8 @@ export function registerOpenAiStt(ws: WsServerApi) {
     const adapter = new OpenAIRealtimeTranscriptionAdapter({
       sessionId,
       emit: (msg) => {
+        if (msg.type === "stt.partial") void translator.onSttPartial(msg);
+        if (msg.type === "stt.final") void translator.onSttFinal(msg);
         ws.emitToSession(sessionId, msg);
       },
       onError: (err) => {
@@ -64,6 +68,7 @@ export function registerOpenAiStt(ws: WsServerApi) {
         scheduleIdleStop(sessionId, cur);
         return;
       }
+      translator.abortSession(sessionId);
       void cur.adapter.stop({ reason: "idle_timeout" });
       entries.delete(sessionId);
     }, DEFAULT_IDLE_STOP_MS);
@@ -82,6 +87,7 @@ export function registerOpenAiStt(ws: WsServerApi) {
     const entry = entries.get(sessionId);
     if (!entry) return;
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    translator.abortSession(sessionId);
     void entry.adapter.stop({ reason: reason ?? "client_stop" });
     entries.delete(sessionId);
   });
@@ -91,6 +97,7 @@ export function registerOpenAiStt(ws: WsServerApi) {
     unsubscribeStop();
     for (const [sessionId, entry] of entries) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
+      translator.abortSession(sessionId);
       void entry.adapter.stop({ reason: "server_shutdown" });
       entries.delete(sessionId);
     }
