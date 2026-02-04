@@ -14,7 +14,7 @@ This document is the **handoff boundary** between independent agents. Agents mus
 ## Milestones (recommended checkpoints)
 
 ### Milestone 1: STT-only into UI
-- End-to-end: tab audio capture → WS server → streaming STT → UI renders `turn.*` + `stt.*`.
+- End-to-end: mic audio capture → WS server → streaming STT → UI renders `turn.*` + `stt.*`.
 - Translation is explicitly out of scope for this checkpoint.
 
 ### Milestone 2: Add translation
@@ -30,7 +30,7 @@ This document is the **handoff boundary** between independent agents. Agents mus
 - **Allowed paths**: `apps/web/**`
 - **Inputs**: `docs/PRODUCT.md`, `packages/shared/src/protocol.ts`
 - **Output**:
-  - Start/Stop capture of tab audio (`getDisplayMedia({ audio: true, video: false })`)
+  - Start/Stop capture of mic audio (`getUserMedia({ audio: true })`)
   - Convert to mono PCM16 @ 16kHz (or documented rate) and send `audio.frame`
 - **Acceptance**:
   - Sends frames at roughly 20ms cadence

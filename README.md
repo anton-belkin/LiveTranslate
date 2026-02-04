@@ -30,9 +30,11 @@ pnpm dev
 ```
 
 ## Audio capture caveat (pure web app)
-This PoC captures meeting audio using **browser tab share**:
-- You must choose a **tab** in the share picker
-- You must enable **Share tab audio**
+This PoC starts with **microphone capture** (works even for Zoom/Teams desktop apps):
+- It will prompt for mic permission (`getUserMedia({ audio: true })`).
+- On macOS with built-in speakers+mic, some setups capture meeting audio “cleanly” through the mic input; do not treat this as guaranteed behavior across all devices/headphones.
+
+Optional later: add tab-audio (`getDisplayMedia({ audio: true })`) and/or multi-source mixing if needed.
 
 ## Multi-agent workflow (important)
 1) Read the contracts:

@@ -4,15 +4,22 @@
 A low-latency browser app that captures meeting audio, transcribes speech in real time, and shows bilingual (DE↔EN) text in two columns so participants can follow a live conversation across languages.
 
 ## Primary user story
-During a live meeting with German- and English-speaking participants, the user opens LiveTranslate, shares the meeting tab audio, and sees a continuously updating bilingual transcript that separates turns so replies from different speakers don’t merge.
+During a live meeting with German- and English-speaking participants, the user opens LiveTranslate, grants microphone access, and sees a continuously updating bilingual transcript that separates turns so replies from different speakers don’t merge.
 
 ## Core flow
 1) User clicks Start
-2) Browser asks to share a Chrome tab and the user enables “Share tab audio”
-3) App streams audio to server
+2) Browser asks for microphone permission
+3) App streams microphone audio to server
 4) Server performs streaming speech-to-text (interim + final)
 5) Server translates DE→EN and EN→DE (streaming when possible)
 6) Browser UI renders a two-column transcript with clear turn blocks
+
+## Audio capture strategy (PoC)
+- **Default**: capture **microphone** audio (`getUserMedia({ audio: true })`) to work across Zoom/Teams desktop apps.
+- **Optional later**:
+  - capture browser **tab audio** (`getDisplayMedia({ audio: true })`) when meetings run in a tab
+  - mix multiple sources (mic + tab/system) via WebAudio if needed
+- Note: On macOS, some users observe the built-in microphone input can include system output when using built-in speakers; we treat this as a helpful environment property, not a guaranteed platform feature.
 
 ## UX requirements
 - Two columns: Deutsch (LANG1) and English (LANG2)

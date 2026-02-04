@@ -18,7 +18,9 @@ Implement browser tab-audio capture and stream audio frames to the server over W
 - `packages/shared/src/protocol.ts`
 
 ## Requirements
-- Capture meeting audio via:
+- Capture meeting audio via microphone (default ingestion for this PoC):
+  - `navigator.mediaDevices.getUserMedia({ audio: true })`
+- (Optional later) support tab-audio capture for browser-based meetings:
   - `navigator.mediaDevices.getDisplayMedia({ audio: true, video: false })`
 - Convert to **mono PCM16 little-endian**.
 - Target sample rate: **16 kHz** if feasible; otherwise document actual rate and resampling approach.
@@ -27,7 +29,7 @@ Implement browser tab-audio capture and stream audio frames to the server over W
 - Implement Start/Stop UI controls (minimal is fine).
 
 ## Acceptance checklist
-- Start prompts the share picker and works when user enables **Share tab audio**.
+- Start prompts the microphone permission dialog and begins streaming audio after permission.
 - Sends audio frames at ~20ms cadence (or best-effort with documented frame size).
 - Stop closes tracks and WS cleanly; restart works without page refresh.
 
