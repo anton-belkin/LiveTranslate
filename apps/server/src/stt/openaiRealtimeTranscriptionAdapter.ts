@@ -6,7 +6,9 @@ import {
 } from "@livetranslate/shared";
 import { uint8ArrayToBase64 } from "../util/base64.js";
 import { newId } from "../util/id.js";
+import { openaiTranscribeWav } from "./openaiAudioTranscribe.js";
 import { resamplePcm16MonoLinear } from "./resamplePcm16.js";
+import { pcm16MonoToWavBytes } from "./wav.js";
 
 const DEFAULT_REALTIME_MODEL = "gpt-realtime";
 function getRealtimeUrl() {
@@ -20,10 +22,6 @@ type Emit = (msg: ServerToClientMessage) => void;
 type ItemTiming = {
   startMs?: number;
   endMs?: number;
-};
-
-type SegmentMeta = {
-  turnId: string;
 };
 
 type AdapterState = "idle" | "connecting" | "open" | "stopping" | "stopped";
@@ -42,26 +40,38 @@ export class OpenAIRealtimeTranscriptionAdapter {
   private queuedBytes = 0;
   private readonly maxQueuedBytes = 2 * 1024 * 1024; // 2MB
 
-  private segmentTextByItemId = new Map<string, string>();
   private timingsByTurnId = new Map<string, ItemTiming>();
-  private segmentByItemId = new Map<string, SegmentMeta>();
   private openTurns = new Set<string>(); // turnIds
-  private openSegmentsByTurnId = new Map<string, Set<string>>(); // turnId -> itemIds
-  private segmentOrderByTurnId = new Map<string, string[]>(); // turnId -> [itemId...]
-  private lastEmittedTurnText = new Map<string, string>(); // turnId -> combined text
   private maxTurnTimersByItemId = new Map<string, NodeJS.Timeout>();
 
   private audioCursorSamples = 0;
 
-  private inSpeech = false;
   private currentTurnId: string | null = null;
   private speechStartMs: number | null = null;
   private speechEndMs: number | null = null;
-  private eagerCommitTimer: NodeJS.Timeout | null = null;
-  private finalizeTurnTimer: NodeJS.Timeout | null = null;
-  private lastCommitAt = 0;
-  private eagerCommitNextDueAt = 0;
-  private lastCommitAudioCursorMs = 0;
+  private inSpeech = false;
+
+  // Rolling-window interim STT (non-realtime transcription endpoint)
+  private rollingTimer: NodeJS.Timeout | null = null;
+  private rollingInFlight = false;
+  private rollingFinalizeQueued = false;
+  private turnDraftText = "";
+
+  // Audio buffers (24kHz mono PCM16)
+  private preSpeechChunks: Int16Array[] = [];
+  private preSpeechSamples = 0;
+  private turnChunks: Int16Array[] = [];
+  private turnSamples = 0;
+
+  private readonly rollingCfg: {
+    maxWindowSeconds: number;
+    overlapSeconds: number;
+    updateIntervalMs: number;
+    stableTailChars: number;
+    maxWindowSamples: number;
+    overlapSamples: number;
+    preSpeechMaxSamples: number;
+  };
 
   private audioCursorNowMs() {
     return Math.floor((this.audioCursorSamples * 1000) / OPENAI_INPUT_SAMPLE_RATE_HZ);
@@ -72,51 +82,14 @@ export class OpenAIRealtimeTranscriptionAdapter {
     return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
   }
 
-  private combineTurnText(turnId: string) {
-    const order = this.segmentOrderByTurnId.get(turnId) ?? [];
-    const parts: string[] = [];
-    for (const itemId of order) {
-      const t = this.segmentTextByItemId.get(itemId) ?? "";
-      if (!t) continue;
-      parts.push(t);
-    }
-    const combined = parts.join(" ").replace(/\s+/g, " ").trim();
-    return this.sanitizeText(combined);
-  }
+  private stabilizeDraft(prev: string, next: string) {
+    const cleanedNext = this.sanitizeText(next).replace(/\s+/g, " ").trim();
+    if (!prev) return cleanedNext;
 
-  private emitCombinedPartial(turnId: string) {
-    const combined = this.combineTurnText(turnId);
-    const prev = this.lastEmittedTurnText.get(turnId) ?? "";
-    if (combined === prev) return;
-    this.lastEmittedTurnText.set(turnId, combined);
-
-    const timing = this.timingsByTurnId.get(turnId) ?? {};
-    const startMs = timing.startMs ?? this.speechStartMs ?? 0;
-
-    this.emit({
-      type: "stt.partial",
-      sessionId: this.sessionId,
-      turnId,
-      segmentId: turnId,
-      text: combined,
-      startMs,
-    });
-  }
-
-  private emitCombinedFinal(turnId: string, endMs: number) {
-    const combined = this.combineTurnText(turnId);
-    const timing = this.timingsByTurnId.get(turnId) ?? {};
-    const startMs = timing.startMs ?? this.speechStartMs ?? 0;
-
-    this.emit({
-      type: "stt.final",
-      sessionId: this.sessionId,
-      turnId,
-      segmentId: turnId,
-      text: combined,
-      startMs,
-      endMs,
-    });
+    const lcp = longestCommonPrefixLength(prev, cleanedNext);
+    const stableLimit = Math.max(0, prev.length - this.rollingCfg.stableTailChars);
+    const stableLen = Math.min(lcp, stableLimit);
+    return prev.slice(0, stableLen) + cleanedNext.slice(stableLen);
   }
 
   constructor(args: {
@@ -134,6 +107,39 @@ export class OpenAIRealtimeTranscriptionAdapter {
       args.transcriptionModel ??
       process.env.OPENAI_TRANSCRIPTION_MODEL ??
       "gpt-4o-mini-transcribe";
+
+    const maxWindowSeconds = clampNumber(
+      Number(process.env.STT_ROLLING_MAX_WINDOW_SECONDS ?? 25),
+      5,
+      60,
+    );
+    const overlapSeconds = clampNumber(
+      Number(process.env.STT_ROLLING_OVERLAP_SECONDS ?? 1.5),
+      0.2,
+      5,
+    );
+    const updateIntervalMs = clampNumber(
+      Number(process.env.STT_ROLLING_UPDATE_INTERVAL_MS ?? 1000),
+      300,
+      5000,
+    );
+    const stableTailChars = clampNumber(
+      Number(process.env.STT_ROLLING_STABLE_TAIL_CHARS ?? 60),
+      10,
+      200,
+    );
+
+    this.rollingCfg = {
+      maxWindowSeconds,
+      overlapSeconds,
+      updateIntervalMs,
+      stableTailChars,
+      maxWindowSamples: Math.floor(OPENAI_INPUT_SAMPLE_RATE_HZ * maxWindowSeconds),
+      overlapSamples: Math.floor(OPENAI_INPUT_SAMPLE_RATE_HZ * overlapSeconds),
+      preSpeechMaxSamples: Math.floor(
+        OPENAI_INPUT_SAMPLE_RATE_HZ * Math.max(2, overlapSeconds),
+      ),
+    };
   }
 
   start() {
@@ -247,6 +253,11 @@ export class OpenAIRealtimeTranscriptionAdapter {
         if (ws.bufferedAmount > this.maxQueuedBytes) return;
         ws.send(msg);
         this.audioCursorSamples += resampled.length;
+        this.appendToPreSpeech(resampled);
+        if (this.currentTurnId) {
+          this.appendToTurn(resampled);
+          this.maybeForceTurnCut();
+        }
         return;
       }
       // fall through to queue while configuring
@@ -261,6 +272,11 @@ export class OpenAIRealtimeTranscriptionAdapter {
     this.audioQueue.push({ msg, approxBytes });
     this.queuedBytes += approxBytes;
     this.audioCursorSamples += resampled.length;
+    this.appendToPreSpeech(resampled);
+    if (this.currentTurnId) {
+      this.appendToTurn(resampled);
+      this.maybeForceTurnCut();
+    }
   }
 
   async stop(args?: { reason?: string }) {
@@ -273,8 +289,16 @@ export class OpenAIRealtimeTranscriptionAdapter {
       const timing = this.timingsByTurnId.get(turnId);
       const startMs = timing?.startMs ?? 0;
       const endMs = timing?.endMs ?? startMs;
-      // Best-effort: emit final combined STT before turn.final.
-      this.emitCombinedFinal(turnId, endMs);
+      // Best-effort: emit final draft STT before turn.final.
+      this.emit({
+        type: "stt.final",
+        sessionId: this.sessionId,
+        turnId,
+        segmentId: turnId,
+        text: this.turnDraftText,
+        startMs,
+        endMs,
+      });
       this.emit({
         type: "turn.final",
         sessionId: this.sessionId,
@@ -284,7 +308,7 @@ export class OpenAIRealtimeTranscriptionAdapter {
       });
     }
     this.openTurns.clear();
-    this.stopEagerCommit();
+    this.stopRollingTimer();
 
     const ws = this.ws;
     this.ws = null;
@@ -328,13 +352,6 @@ export class OpenAIRealtimeTranscriptionAdapter {
         evt?.error?.message ??
         evt?.error?.code ??
         "OpenAI realtime returned error";
-      const code = String(evt?.error?.code ?? "");
-      const lowerMsg = String(message).toLowerCase();
-      const isEmptyCommit =
-        code.toLowerCase().includes("empty") || lowerMsg.includes("empty");
-      // Expected sometimes when we eagerly commit while buffer is empty.
-      if (isEmptyCommit && Date.now() - this.lastCommitAt < 2000) return;
-
       this.onError(new Error(message));
       return;
     }
@@ -347,12 +364,18 @@ export class OpenAIRealtimeTranscriptionAdapter {
       this.inSpeech = true;
       this.speechStartMs = startMs;
       this.speechEndMs = null;
-      this.lastCommitAudioCursorMs = this.audioCursorNowMs();
-      this.eagerCommitNextDueAt = Date.now() + 700;
+      this.currentTurnId = newId("turn");
+      this.turnDraftText = "";
+      this.turnChunks = [];
+      this.turnSamples = 0;
 
-      if (!this.currentTurnId) {
-        this.currentTurnId = newId("turn");
-      }
+      // Seed turn buffer with a small prespeech overlap window.
+      const seed = this.snapshotTailSamples(
+        this.preSpeechChunks,
+        this.preSpeechSamples,
+        this.rollingCfg.overlapSamples,
+      );
+      if (seed.length > 0) this.appendToTurn(seed);
 
       if (!this.timingsByTurnId.has(this.currentTurnId)) {
         this.timingsByTurnId.set(this.currentTurnId, { startMs });
@@ -368,16 +391,14 @@ export class OpenAIRealtimeTranscriptionAdapter {
         });
       }
 
-      this.startEagerCommit();
+      this.startRollingTimer();
 
       // Force a boundary for very long speech: commit the buffer.
       const existing = this.maxTurnTimersByItemId.get(itemId);
       if (existing) clearTimeout(existing);
       const t = setTimeout(() => {
-        const ws = this.ws;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        this.lastCommitAt = Date.now();
-        ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+        // If speech continues too long, cut the turn (running-window cap).
+        this.forceCutTurn();
       }, this.tuning.maxTurnMs);
       this.maxTurnTimersByItemId.set(itemId, t);
 
@@ -390,103 +411,8 @@ export class OpenAIRealtimeTranscriptionAdapter {
       if (!itemId) return;
       this.inSpeech = false;
       this.speechEndMs = endMs;
-      this.stopEagerCommit();
-
-      // Best-effort: commit once more to flush trailing audio for transcription.
-      const ws = this.ws;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        this.lastCommitAt = Date.now();
-        ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-      }
-
-      this.scheduleFinalizeTurn();
-      return;
-    }
-
-    // Each commit creates a new user audio item which will be transcribed.
-    // We map that provider `item_id` to { turnId, segmentId=item_id }.
-    if (type === "input_audio_buffer.committed") {
-      const itemId = String(evt.item_id ?? "");
-      if (!itemId) return;
-
-      // Ensure we have a turn (speech_started may not always be emitted).
-      if (!this.currentTurnId) {
-        this.currentTurnId = newId("turn");
-        const startMs = this.speechStartMs ?? 0;
-        this.timingsByTurnId.set(this.currentTurnId, { startMs });
-        this.openTurns.add(this.currentTurnId);
-        this.emit({
-          type: "turn.start",
-          sessionId: this.sessionId,
-          turnId: this.currentTurnId,
-          startMs,
-        });
-      }
-
-      const turnId = this.currentTurnId;
-      this.segmentByItemId.set(itemId, { turnId });
-      this.segmentTextByItemId.set(itemId, "");
-
-      const order = this.segmentOrderByTurnId.get(turnId) ?? [];
-      order.push(itemId);
-      this.segmentOrderByTurnId.set(turnId, order);
-
-      const openSegs = this.openSegmentsByTurnId.get(turnId) ?? new Set<string>();
-      openSegs.add(itemId);
-      this.openSegmentsByTurnId.set(turnId, openSegs);
-
-      return;
-    }
-
-    if (type === "conversation.item.input_audio_transcription.delta") {
-      const itemId = String(evt.item_id ?? "");
-      const delta = String(evt.delta ?? "");
-      if (!itemId) return;
-
-      const seg = this.segmentByItemId.get(itemId);
-      if (!seg) return;
-
-      const existing = this.segmentTextByItemId.get(itemId) ?? "";
-      const nextText = existing + delta;
-      this.segmentTextByItemId.set(itemId, nextText);
-
-      // Stitch into a single UI-facing segment per turn.
-      this.emitCombinedPartial(seg.turnId);
-      return;
-    }
-
-    if (type === "conversation.item.input_audio_transcription.completed") {
-      const itemId = String(evt.item_id ?? "");
-      const transcript = String(evt.transcript ?? "");
-      if (!itemId) return;
-
-      const seg = this.segmentByItemId.get(itemId);
-      if (!seg) return;
-      this.segmentTextByItemId.set(itemId, transcript);
-      // Emit stitched partial after finalizing a sub-segment (keeps UI up to date).
-      this.emitCombinedPartial(seg.turnId);
-
-      const timer = this.maxTurnTimersByItemId.get(itemId);
-      if (timer) clearTimeout(timer);
-      this.maxTurnTimersByItemId.delete(itemId);
-
-      this.segmentByItemId.delete(itemId);
-
-      const openSegs = this.openSegmentsByTurnId.get(seg.turnId);
-      if (openSegs) {
-        openSegs.delete(itemId);
-        if (openSegs.size === 0) this.openSegmentsByTurnId.delete(seg.turnId);
-      }
-
-      // If speech already ended, we can finalize once all segments complete.
-      if (!this.inSpeech) this.tryFinalizeTurnNow();
-      return;
-    }
-
-    if (type === "conversation.item.input_audio_transcription.failed") {
-      const message =
-        evt?.error?.message ?? "OpenAI input transcription failed";
-      this.onError(new Error(message));
+      this.stopRollingTimer();
+      void this.finalizeTurnAsync();
       return;
     }
   }
@@ -494,77 +420,129 @@ export class OpenAIRealtimeTranscriptionAdapter {
   private clearAllTimers() {
     for (const t of this.maxTurnTimersByItemId.values()) clearTimeout(t);
     this.maxTurnTimersByItemId.clear();
-    this.stopEagerCommit();
-    if (this.finalizeTurnTimer) clearTimeout(this.finalizeTurnTimer);
-    this.finalizeTurnTimer = null;
+    this.stopRollingTimer();
   }
 
-  private startEagerCommit() {
-    if (this.eagerCommitTimer) return;
-    // Adaptive eager commits while in speech so transcription starts during speech,
-    // but avoid micro-chunks by requiring a minimum audio duration between commits.
-    this.eagerCommitTimer = setInterval(() => {
-      if (!this.inSpeech) return;
-      const ws = this.ws;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      if (!this.sessionConfigured) return;
-
-      const now = Date.now();
-      if (now < this.eagerCommitNextDueAt) return;
-
-      const audioMsSinceLastCommit = this.audioCursorNowMs() - this.lastCommitAudioCursorMs;
-      if (audioMsSinceLastCommit < 450) {
-        // Try again soon; don't advance the due time much.
-        this.eagerCommitNextDueAt = now + 150;
-        return;
-      }
-
-      // Next commit window: 700–1200ms.
-      const nextInterval = 700 + Math.floor(Math.random() * 501);
-      this.eagerCommitNextDueAt = now + nextInterval;
-      this.lastCommitAudioCursorMs = this.audioCursorNowMs();
-
-      this.lastCommitAt = now;
-      ws.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
-    }, 120);
+  private startRollingTimer() {
+    if (this.rollingTimer) return;
+    this.rollingTimer = setInterval(() => {
+      void this.rollingTick();
+    }, this.rollingCfg.updateIntervalMs);
   }
 
-  private stopEagerCommit() {
-    if (!this.eagerCommitTimer) return;
-    clearInterval(this.eagerCommitTimer);
-    this.eagerCommitTimer = null;
+  private stopRollingTimer() {
+    if (!this.rollingTimer) return;
+    clearInterval(this.rollingTimer);
+    this.rollingTimer = null;
   }
 
-  private scheduleFinalizeTurn() {
-    if (!this.currentTurnId) return;
-    if (this.finalizeTurnTimer) clearTimeout(this.finalizeTurnTimer);
-
-    // Give the provider time to emit final transcription events.
-    this.finalizeTurnTimer = setTimeout(() => {
-      this.tryFinalizeTurnNow();
-    }, 1500);
-  }
-
-  private tryFinalizeTurnNow() {
+  private async rollingTick() {
+    if (this.rollingInFlight) return;
     const turnId = this.currentTurnId;
     if (!turnId) return;
-    if (this.inSpeech) return;
-    const openSegs = this.openSegmentsByTurnId.get(turnId);
-    if (openSegs && openSegs.size > 0) return;
+    if (!this.inSpeech) return;
+
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return;
+
+    const windowPcm = this.snapshotTailSamples(
+      this.turnChunks,
+      this.turnSamples,
+      this.rollingCfg.maxWindowSamples,
+    );
+    if (windowPcm.length < Math.floor(OPENAI_INPUT_SAMPLE_RATE_HZ * 0.25)) return;
+
+    this.rollingInFlight = true;
+    try {
+      const wavBytes = pcm16MonoToWavBytes({
+        pcm16: windowPcm,
+        sampleRateHz: OPENAI_INPUT_SAMPLE_RATE_HZ,
+      });
+      const { text } = await openaiTranscribeWav({
+        apiKey,
+        wavBytes,
+        model: this.transcriptionModel,
+      });
+
+      // If we rotated turns while request was in flight, ignore.
+      if (this.currentTurnId !== turnId) return;
+
+      const nextDraft = this.stabilizeDraft(this.turnDraftText, text);
+      this.turnDraftText = nextDraft;
+
+      const timing = this.timingsByTurnId.get(turnId) ?? {};
+      const startMs = timing.startMs ?? this.speechStartMs ?? 0;
+      this.emit({
+        type: "stt.partial",
+        sessionId: this.sessionId,
+        turnId,
+        segmentId: turnId,
+        text: nextDraft,
+        startMs,
+      });
+    } catch (err) {
+      this.onError(err instanceof Error ? err : new Error(String(err)));
+    } finally {
+      this.rollingInFlight = false;
+      if (this.rollingFinalizeQueued && !this.inSpeech) {
+        this.rollingFinalizeQueued = false;
+        void this.finalizeTurnAsync();
+      }
+    }
+  }
+
+  private async finalizeTurnAsync() {
+    const turnId = this.currentTurnId;
+    if (!turnId) return;
+    if (this.rollingInFlight) {
+      this.rollingFinalizeQueued = true;
+      return;
+    }
 
     const timing = this.timingsByTurnId.get(turnId) ?? {};
     const startMs = timing.startMs ?? this.speechStartMs ?? 0;
-    const endMs =
-      this.speechEndMs ??
-      this.audioCursorNowMs() ??
-      startMs;
+    const endMs = this.speechEndMs ?? this.audioCursorNowMs();
     timing.startMs = startMs;
     timing.endMs = endMs;
     this.timingsByTurnId.set(turnId, timing);
 
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (apiKey) {
+      try {
+        const windowPcm = this.snapshotTailSamples(
+          this.turnChunks,
+          this.turnSamples,
+          this.rollingCfg.maxWindowSamples,
+        );
+        if (windowPcm.length > 0) {
+          const wavBytes = pcm16MonoToWavBytes({
+            pcm16: windowPcm,
+            sampleRateHz: OPENAI_INPUT_SAMPLE_RATE_HZ,
+          });
+          const { text } = await openaiTranscribeWav({
+            apiKey,
+            wavBytes,
+            model: this.transcriptionModel,
+          });
+          this.turnDraftText = this.sanitizeText(text).replace(/\s+/g, " ").trim();
+        }
+      } catch (err) {
+        this.onError(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+
+    // Final combined segment.
+    this.emit({
+      type: "stt.final",
+      sessionId: this.sessionId,
+      turnId,
+      segmentId: turnId,
+      text: this.turnDraftText,
+      startMs,
+      endMs,
+    });
+
     if (this.openTurns.has(turnId)) {
-      // Emit a single final stitched segment for the whole turn.
-      this.emitCombinedFinal(turnId, endMs);
       this.emit({
         type: "turn.final",
         sessionId: this.sessionId,
@@ -575,15 +553,159 @@ export class OpenAIRealtimeTranscriptionAdapter {
       this.openTurns.delete(turnId);
     }
 
+    // Reset turn state.
     this.currentTurnId = null;
     this.speechStartMs = null;
     this.speechEndMs = null;
-    this.lastEmittedTurnText.delete(turnId);
-    this.segmentOrderByTurnId.delete(turnId);
-    this.openSegmentsByTurnId.delete(turnId);
-
-    if (this.finalizeTurnTimer) clearTimeout(this.finalizeTurnTimer);
-    this.finalizeTurnTimer = null;
+    this.turnChunks = [];
+    this.turnSamples = 0;
+    this.turnDraftText = "";
   }
+
+  private maybeForceTurnCut() {
+    const turnId = this.currentTurnId;
+    if (!turnId) return;
+    const timing = this.timingsByTurnId.get(turnId);
+    const startMs = timing?.startMs ?? this.speechStartMs;
+    if (startMs == null) return;
+    if (this.audioCursorNowMs() - startMs <= this.rollingCfg.maxWindowSeconds * 1000) return;
+    this.forceCutTurn();
+  }
+
+  private forceCutTurn() {
+    if (!this.inSpeech) return;
+    const oldTurnId = this.currentTurnId;
+    if (!oldTurnId) return;
+
+    const timing = this.timingsByTurnId.get(oldTurnId) ?? {};
+    const startMs = timing.startMs ?? this.speechStartMs ?? 0;
+    const endMs = this.audioCursorNowMs();
+    timing.startMs = startMs;
+    timing.endMs = endMs;
+    this.timingsByTurnId.set(oldTurnId, timing);
+
+    // Best-effort finalize with current draft (no extra request).
+    this.emit({
+      type: "stt.final",
+      sessionId: this.sessionId,
+      turnId: oldTurnId,
+      segmentId: oldTurnId,
+      text: this.turnDraftText,
+      startMs,
+      endMs,
+    });
+    if (this.openTurns.has(oldTurnId)) {
+      this.emit({
+        type: "turn.final",
+        sessionId: this.sessionId,
+        turnId: oldTurnId,
+        startMs,
+        endMs,
+      });
+      this.openTurns.delete(oldTurnId);
+    }
+
+    // Start new turn with overlap audio.
+    const newTurnId = newId("turn");
+    const overlap = this.snapshotTailSamples(
+      this.turnChunks,
+      this.turnSamples,
+      this.rollingCfg.overlapSamples,
+    );
+    this.currentTurnId = newTurnId;
+    this.turnDraftText = "";
+    this.turnChunks = [];
+    this.turnSamples = 0;
+    if (overlap.length > 0) this.appendToTurn(overlap);
+
+    const newStartMs = Math.max(0, endMs - Math.floor(this.rollingCfg.overlapSeconds * 1000));
+    this.speechStartMs = newStartMs;
+    this.timingsByTurnId.set(newTurnId, { startMs: newStartMs });
+    this.openTurns.add(newTurnId);
+    this.emit({
+      type: "turn.start",
+      sessionId: this.sessionId,
+      turnId: newTurnId,
+      startMs: newStartMs,
+    });
+  }
+
+  private appendToPreSpeech(chunk: Int16Array) {
+    this.preSpeechChunks.push(chunk);
+    this.preSpeechSamples += chunk.length;
+    this.trimChunksToMaxSamples(
+      this.preSpeechChunks,
+      () => this.preSpeechSamples,
+      (v) => {
+        this.preSpeechSamples = v;
+      },
+      this.rollingCfg.preSpeechMaxSamples,
+    );
+  }
+
+  private appendToTurn(chunk: Int16Array) {
+    this.turnChunks.push(chunk);
+    this.turnSamples += chunk.length;
+    this.trimChunksToMaxSamples(
+      this.turnChunks,
+      () => this.turnSamples,
+      (v) => {
+        this.turnSamples = v;
+      },
+      this.rollingCfg.maxWindowSamples,
+    );
+  }
+
+  private trimChunksToMaxSamples(
+    chunks: Int16Array[],
+    getTotal: () => number,
+    setTotal: (n: number) => void,
+    maxSamples: number,
+  ) {
+    let total = getTotal();
+    while (total > maxSamples && chunks.length > 0) {
+      const first = chunks[0];
+      if (!first) break;
+      const extra = total - maxSamples;
+      if (first.length <= extra) {
+        chunks.shift();
+        total -= first.length;
+        continue;
+      }
+      // Trim the first chunk.
+      chunks[0] = first.subarray(extra);
+      total -= extra;
+      break;
+    }
+    setTotal(total);
+  }
+
+  private snapshotTailSamples(chunks: Int16Array[], totalSamples: number, tailSamples: number) {
+    const want = Math.max(0, Math.min(totalSamples, tailSamples));
+    if (want === 0) return new Int16Array();
+    const out = new Int16Array(want);
+    let remaining = want;
+    let writePos = want;
+    for (let i = chunks.length - 1; i >= 0 && remaining > 0; i--) {
+      const c = chunks[i];
+      const take = Math.min(remaining, c.length);
+      writePos -= take;
+      out.set(c.subarray(c.length - take), writePos);
+      remaining -= take;
+    }
+    return out;
+  }
+}
+
+function longestCommonPrefixLength(a: string, b: string) {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a.charCodeAt(i) === b.charCodeAt(i)) i++;
+  return i;
+}
+
+function clampNumber(n: number, min: number, max: number) {
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, n));
 }
 
