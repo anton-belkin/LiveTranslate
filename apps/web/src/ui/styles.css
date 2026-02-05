@@ -137,6 +137,74 @@
   margin-top: 12px;
 }
 
+.bubbles {
+  padding: 12px;
+}
+
+.bubblesHeader {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 6px 2px 10px;
+  color: rgba(229, 231, 235, 0.62);
+  font-size: 12px;
+}
+
+.bubblesColLabel {
+  letter-spacing: 0.2px;
+}
+
+.bubbleList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bubbleRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.bubbleCell {
+  min-height: 34px;
+  display: flex;
+}
+
+.bubble {
+  max-width: 100%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: rgba(229, 231, 235, 0.92);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+.bubbleAlt {
+  background: rgba(30, 41, 59, 0.5);
+  color: rgba(191, 219, 254, 0.9);
+}
+
+.placeholder {
+  color: rgba(229, 231, 235, 0.55);
+  font-size: 13px;
+  padding: 10px 2px;
+}
+
+.errorBox {
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(225, 29, 72, 0.12);
+  color: rgba(254, 226, 226, 0.95);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .transcriptHeader {
   display: grid;
   grid-template-columns: 1fr 1fr;

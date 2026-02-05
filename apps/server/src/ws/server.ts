@@ -1,4 +1,5 @@
 import WebSocket, { WebSocketServer } from "ws";
+import type http from "node:http";
 import {
   PROTOCOL_VERSION,
   safeParseClientMessage,
@@ -44,8 +45,8 @@ export type WsServerApi = {
   registerSessionStopConsumer: (consumer: SessionStopConsumer) => () => void;
 };
 
-export function createWsServer(args: { port: number }): WsServerApi {
-  const wss = new WebSocketServer({ port: args.port });
+export function createWsServer(args: { server: http.Server }): WsServerApi {
+  const wss = new WebSocketServer({ server: args.server });
 
   const audioFrameConsumers: AudioFrameConsumer[] = [];
   const sessionStopConsumers: SessionStopConsumer[] = [];
