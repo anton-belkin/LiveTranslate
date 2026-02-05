@@ -22,10 +22,16 @@ export type UseLiveTranslateSocketArgs = {
 };
 
 function makeHello(): ClientHello {
+  const enableRu =
+    typeof window !== "undefined" &&
+    ["1", "true", "yes"].includes(
+      new URLSearchParams(window.location.search).get("ru")?.toLowerCase() ?? "",
+    );
   return {
     type: "client.hello",
     protocolVersion: PROTOCOL_VERSION,
     langs: { lang1: "de", lang2: "en" },
+    enableRu,
     client: {
       userAgent: navigator.userAgent,
     },

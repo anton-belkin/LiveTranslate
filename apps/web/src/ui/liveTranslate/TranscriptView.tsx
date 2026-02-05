@@ -88,6 +88,18 @@ export function TranscriptView({
   state: TranscriptState;
   showOriginal: boolean;
 }) {
+  const enableRu =
+    typeof window !== "undefined" &&
+    ["1", "true", "yes"].includes(
+      new URLSearchParams(window.location.search).get("ru")?.toLowerCase() ?? "",
+    );
+  const translationColumns = useMemo(
+    () =>
+      enableRu
+        ? TRANSLATION_COLUMNS
+        : TRANSLATION_COLUMNS.filter((col) => col.lang !== "ru"),
+    [enableRu],
+  );
   const turns = useMemo(
     () =>
       state.turnOrder
@@ -161,7 +173,7 @@ export function TranscriptView({
           if (original.isPartial) originalIsPartial = true;
         }
 
-        for (const { lang } of TRANSLATION_COLUMNS) {
+        for (const { lang } of translationColumns) {
           const translation = turn.translationsByLang?.[lang];
           const translatedText = translation?.text?.trim();
           if (translation && translatedText) {
@@ -189,14 +201,14 @@ export function TranscriptView({
         }
       }
 
-      for (const { lang } of TRANSLATION_COLUMNS) {
+      for (const { lang } of translationColumns) {
         if (translations[lang].missing) translations[lang].isFinal = false;
       }
 
       const originalText = originalParts.join(originalParts.length > 1 ? "\n" : " ");
       const originalPartial = originalHasText && (originalIsPartial || !originalIsFinal);
 
-      const translationsByLang = TRANSLATION_COLUMNS.reduce(
+      const translationsByLang = translationColumns.reduce(
         (acc, { lang }) => {
           const text = translations[lang].parts.join(
             translations[lang].parts.length > 1 ? "\n" : " ",
@@ -221,17 +233,7 @@ export function TranscriptView({
         translationsByLang,
       };
     });
-  }, [groups]);
-
-  // #region agent log
-  useEffect(() => {
-    const latest = rows[rows.length - 1];
-    const deTextLen = latest?.translationsByLang.de.text.length ?? 0;
-    const enTextLen = latest?.translationsByLang.en.text.length ?? 0;
-    const ruTextLen = latest?.translationsByLang.ru.text.length ?? 0;
-    fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'TranscriptView.tsx:rows',message:'rows recomputed',data:{rowsCount:rows.length,originalLen:latest?.originalText?.length ?? 0,deLen:deTextLen,enLen:enTextLen,ruLen:ruTextLen},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-  }, [rows]);
-  // #endregion
+  }, [groups, translationColumns]);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const prevCountRef = useRef(0);
@@ -278,7 +280,7 @@ export function TranscriptView({
               <span>Text</span>
             </div>
           ) : null}
-          {TRANSLATION_COLUMNS.map((col) => (
+          {translationColumns.map((col) => (
             <div key={col.lang} className="bubblesColLabel">
               <strong>{col.label}</strong>
               <span>Text</span>
@@ -324,7 +326,7 @@ export function TranscriptView({
                     )}
                   </div>
                 ) : null}
-                {TRANSLATION_COLUMNS.map((col) => {
+                {translationColumns.map((col) => {
                   const cell = row.translationsByLang[col.lang];
                   return (
                     <div key={`${row.group.groupId}-${col.lang}`} className="bubbleCell">

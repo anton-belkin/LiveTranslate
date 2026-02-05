@@ -41,6 +41,10 @@ export const ClientHelloSchema = z.object({
     })
     .optional(),
   /**
+   * Optional: enable RU recognizer/column. Default off when omitted.
+   */
+  enableRu: z.boolean().optional(),
+  /**
    * For debugging/telemetry only (do not rely on it for security decisions).
    */
   client: z

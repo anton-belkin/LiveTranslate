@@ -17,10 +17,16 @@ type UseLiveTranslateStreamArgs = {
 };
 
 function makeHello(): ClientHello {
+  const enableRu =
+    typeof window !== "undefined" &&
+    ["1", "true", "yes"].includes(
+      new URLSearchParams(window.location.search).get("ru")?.toLowerCase() ?? "",
+    );
   return {
     type: "client.hello",
     protocolVersion: PROTOCOL_VERSION,
     langs: { lang1: "de", lang2: "en" },
+    enableRu,
     client: {
       userAgent: navigator.userAgent,
     },
@@ -151,17 +157,14 @@ export function useLiveTranslateStream({ url, dispatch }: UseLiveTranslateStream
         });
         return;
       }
-
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useLiveTranslateStream.ts:onmessage',message:'ws message received',data:{type:res.data.type,hasText:('text' in res.data && typeof (res.data as { text?: string }).text === 'string') ? (res.data as { text?: string }).text.length : undefined,hasDelta:('textDelta' in res.data && typeof (res.data as { textDelta?: string }).textDelta === 'string') ? (res.data as { textDelta?: string }).textDelta.length : undefined,lang:('lang' in res.data ? (res.data as { lang?: string }).lang : undefined),from:('from' in res.data ? (res.data as { from?: string }).from : undefined),to:('to' in res.data ? (res.data as { to?: string }).to : undefined)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
-      // #endregion
-
-      if (res.data.type === "server.ready") {
-        sessionIdRef.current = res.data.sessionId;
+      const msg = res.data;
+      if (!msg) return;
+      if (msg.type === "server.ready") {
+        sessionIdRef.current = msg.sessionId;
         void startMic();
       }
 
-      dispatch({ type: "server.message", message: res.data });
+      dispatch({ type: "server.message", message: msg });
     };
 
     socket.onerror = () => {

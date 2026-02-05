@@ -46,10 +46,16 @@ export class WsClient {
     socket.onopen = () => {
       this.reconnectAttempt = 0;
       this.setState("open");
+      const enableRu =
+        typeof window !== "undefined" &&
+        ["1", "true", "yes"].includes(
+          new URLSearchParams(window.location.search).get("ru")?.toLowerCase() ?? "",
+        );
       const hello: ClientHello = {
         type: "client.hello",
         protocolVersion: PROTOCOL_VERSION,
         langs: { lang1: "de", lang2: "en" },
+        enableRu,
         client: { userAgent: navigator.userAgent },
       };
       this.sendJson(hello);

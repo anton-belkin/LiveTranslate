@@ -23,13 +23,15 @@ export function registerAzureStt(ws: WsServerApi) {
   const entries = new Map<string, Entry>();
   const config = loadAzureSpeechConfig();
 
-  function ensureEntry(sessionId: string) {
+  function ensureEntry(session: { id: string; hello: { enableRu?: boolean } }) {
+    const sessionId = session.id;
     const existing = entries.get(sessionId);
     if (existing) return existing;
 
     const adapter = new AzureSpeechSttAdapter({
       sessionId,
       config,
+      enableRu: Boolean(session.hello?.enableRu),
       emit: (msg) => {
         ws.emitToSession(sessionId, msg);
       },
@@ -71,7 +73,7 @@ export function registerAzureStt(ws: WsServerApi) {
   }
 
   const unsubscribe = ws.registerAudioFrameConsumer(({ session, frame }) => {
-    const entry = ensureEntry(session.id);
+    const entry = ensureEntry(session);
     entry.lastFrameAt = Date.now();
     scheduleIdleStop(session.id, entry);
 
