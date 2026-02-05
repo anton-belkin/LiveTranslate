@@ -88,6 +88,14 @@ type FinalCandidate = {
   result: sdk.TranslationRecognitionResult;
   offsetMs?: number;
   durationMs?: number;
+  textLen: number;
+};
+
+type LastFinalTurn = {
+  turnId: string;
+  startMs: number;
+  endMs: number;
+  finalizedAtMs: number;
 };
 
 export class AzureSpeechSttAdapter {
@@ -110,7 +118,7 @@ export class AzureSpeechSttAdapter {
   private currentSpeakerId: string | undefined = undefined;
   private pendingEndMs: number | null = null;
   private lastPartialText = "";
-  private bestPartialConfidence: number | null = null;
+  private bestPartialScore: number | null = null;
 
   private currentFromLang: Lang | undefined = undefined;
   private lastTranslationTextByLang: Partial<Record<Lang, string>> = {};
@@ -118,6 +126,7 @@ export class AzureSpeechSttAdapter {
 
   private finalCandidatesByLang: Partial<Record<Lang, FinalCandidate>> = {};
   private finalFlushTimer: NodeJS.Timeout | null = null;
+  private lastFinalTurn: LastFinalTurn | null = null;
 
   private pendingSpeakerId: string | undefined = undefined;
   private pendingSpeakerAtMs: number | undefined = undefined;
@@ -360,15 +369,18 @@ export class AzureSpeechSttAdapter {
       if (!result) return;
       const text = String(result.text ?? "").trim();
       const confidence = getConfidence(result);
-      if (confidence == null || confidence < PARTIAL_CONFIDENCE_THRESHOLD) return;
+      const hasConfidence = confidence != null;
+      const score = hasConfidence ? confidence : text.length;
+      if (hasConfidence && confidence < PARTIAL_CONFIDENCE_THRESHOLD) return;
       const offsetMs = toMs(result.offset);
       const turnId = this.ensureTurn(offsetMs);
       const shouldEmit =
-        this.bestPartialConfidence == null || confidence >= this.bestPartialConfidence;
+        this.bestPartialScore == null || score >= this.bestPartialScore;
+
 
       if (shouldEmit && text && text !== this.lastPartialText) {
         this.lastPartialText = text;
-        this.bestPartialConfidence = confidence;
+        this.bestPartialScore = score;
         this.currentFromLang = from;
         this.emit({
           type: "stt.partial",
@@ -415,16 +427,23 @@ export class AzureSpeechSttAdapter {
       const offsetMs = toMs(result.offset);
       const durationMs = toMs(result.duration) ?? 0;
       const confidence = getConfidence(result) ?? 0;
+      const textLen = text.length;
+      if (offsetMs != null && this.shouldIgnoreLateFinal(offsetMs)) return;
       const turnId = this.ensureTurn(offsetMs);
 
       const existing = this.finalCandidatesByLang[from];
-      if (!existing || confidence >= existing.confidence) {
+      if (
+        !existing ||
+        confidence > existing.confidence ||
+        (confidence === existing.confidence && textLen >= existing.textLen)
+      ) {
         this.finalCandidatesByLang[from] = {
           lang: from,
           confidence,
           result,
           offsetMs: offsetMs ?? undefined,
           durationMs,
+          textLen,
         };
       }
 
@@ -461,7 +480,7 @@ export class AzureSpeechSttAdapter {
     this.finalFlushTimer = setTimeout(() => {
       this.finalFlushTimer = null;
       this.flushFinalCandidates(turnId);
-    }, 250);
+    }, 600);
   }
 
   private flushFinalCandidates(turnId?: string) {
@@ -471,9 +490,13 @@ export class AzureSpeechSttAdapter {
     );
     if (candidates.length === 0) return;
 
-    const best = candidates.reduce((acc, cur) =>
-      cur.confidence > acc.confidence ? cur : acc,
-    );
+    const best = candidates.reduce((acc, cur) => {
+      if (cur.confidence > acc.confidence) return cur;
+      if (cur.confidence < acc.confidence) return acc;
+      if (cur.textLen > acc.textLen) return cur;
+      if (cur.textLen < acc.textLen) return acc;
+      return (cur.durationMs ?? 0) >= (acc.durationMs ?? 0) ? cur : acc;
+    });
     const result = best.result;
     const text = String(result.text ?? "").trim();
     if (!text) return;
@@ -486,6 +509,7 @@ export class AzureSpeechSttAdapter {
     const turnIdResolved = this.ensureTurn(startMs);
     const from = best.lang;
     this.currentFromLang = from;
+
 
     this.emit({
       type: "stt.final",
@@ -535,7 +559,22 @@ export class AzureSpeechSttAdapter {
       endMs,
       speakerId: this.currentSpeakerId,
     });
+    this.lastFinalTurn = {
+      turnId: turnIdResolved,
+      startMs,
+      endMs,
+      finalizedAtMs: Date.now(),
+    };
     this.resetTurnState();
+  }
+
+  private shouldIgnoreLateFinal(offsetMs: number) {
+    if (!this.lastFinalTurn) return false;
+    const graceMs = 1500;
+    const now = Date.now();
+    if (now - this.lastFinalTurn.finalizedAtMs > graceMs) return false;
+    if (offsetMs < this.lastFinalTurn.startMs) return false;
+    return offsetMs <= this.lastFinalTurn.endMs + 500;
   }
 
   private bindDiarizationHandlers(recognizer: sdk.ConversationTranscriber) {
@@ -742,12 +781,15 @@ export class AzureSpeechSttAdapter {
   }
 
   private resetTurnState() {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'azureSpeechSttAdapter.ts:resetTurnState',message:'turn reset',data:{turnId:this.currentTurnId,lastPartialLen:this.lastPartialText.length,candidateCount:Object.keys(this.finalCandidatesByLang).length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
     this.currentTurnId = null;
     this.currentTurnStartMs = null;
     this.pendingEndMs = null;
     this.currentSpeakerId = undefined;
     this.lastPartialText = "";
-    this.bestPartialConfidence = null;
+    this.bestPartialScore = null;
     this.currentFromLang = undefined;
     this.lastTranslationTextByLang = {};
     this.translationRevisionByLang = {};
