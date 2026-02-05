@@ -152,6 +152,19 @@
 
 .bubblesColLabel {
   letter-spacing: 0.2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bubblesColLabel strong {
+  color: rgba(229, 231, 235, 0.92);
+  font-weight: 700;
+}
+
+.bubblesColLabel span {
+  color: rgba(229, 231, 235, 0.7);
 }
 
 .bubbleList {

@@ -1,21 +1,13 @@
 import { useReducer } from "react";
 
-import { TranscriptView } from "./realtime/TranscriptView";
-import { makeInitialState, transcriptReducer } from "./realtime/store";
-import { useRealtimeWebRtc } from "./realtime/useRealtimeWebRtc";
+import { TranscriptView } from "./liveTranslate/TranscriptView";
+import { makeInitialState, transcriptReducer } from "./liveTranslate/store";
+import { useLiveTranslateStream } from "./liveTranslate/useLiveTranslateStream";
 
 export function App() {
   const [state, dispatch] = useReducer(transcriptReducer, undefined, makeInitialState);
 
-  const rtc = useRealtimeWebRtc({
-    dispatch,
-    getSegment: (segmentId) => {
-      const s = state.segmentsById[segmentId];
-      if (!s) return undefined;
-      return { sourceText: s.sourceText, rev: s.rev, sourceLang: s.sourceLang };
-    },
-    columnLangs: state.columnLangs,
-  });
+  const stream = useLiveTranslateStream({ url: state.url, dispatch });
 
   return (
     <div className="appRoot">
@@ -23,7 +15,7 @@ export function App() {
         <div className="header">
           <div>
             <h1 className="title">LiveTranslate</h1>
-            <p className="subtitle">Realtime WebRTC STT + translation</p>
+            <p className="subtitle">Live WS mic streaming + translation</p>
           </div>
           <div className="pill">
             <span
@@ -44,14 +36,14 @@ export function App() {
         <div className="card controls">
           <button
             className="btn btnPrimary"
-            onClick={rtc.connect}
+            onClick={stream.start}
             disabled={state.status === "connecting" || state.status === "open"}
           >
             Start
           </button>
           <button
             className="btn btnDanger"
-            onClick={rtc.disconnect}
+            onClick={stream.stop}
             disabled={state.status !== "open"}
           >
             Stop
@@ -62,12 +54,10 @@ export function App() {
           >
             Clear
           </button>
-          {rtc.lastError ? <span className="pill">{rtc.lastError}</span> : null}
+          {state.lastSocketError ? <span className="pill">{state.lastSocketError}</span> : null}
         </div>
 
-        <div className="card main">
-          <TranscriptView state={state} />
-        </div>
+        <TranscriptView state={state} />
       </div>
     </div>
   );

@@ -1,38 +1,36 @@
 import type { WsServerApi } from "../ws/server.js";
-import { DEFAULT_SEGMENTATION_TUNING } from "@livetranslate/shared";
 import { base64ToUint8Array } from "../util/base64.js";
-import { createOpenAiTranslator } from "../translate/openaiTranslator.js";
-import { OpenAIRealtimeTranscriptionAdapter } from "./openaiRealtimeTranscriptionAdapter.js";
+import { AzureSpeechSttAdapter } from "./azure/azureSpeechSttAdapter.js";
+import { loadAzureSpeechConfig } from "./azure/config.js";
 
 const DEFAULT_IDLE_STOP_MS = 30_000;
 
 type Entry = {
-  adapter: OpenAIRealtimeTranscriptionAdapter;
+  adapter: AzureSpeechSttAdapter;
   idleTimer: NodeJS.Timeout | null;
   lastFrameAt: number;
 };
 
 /**
- * Plug OpenAI Realtime transcription into the WS server audio frame pipeline.
+ * Plug Azure Speech STT + MT into the WS server audio frame pipeline.
  *
  * Lifecycle:
  * - Adapters are created lazily on first audio frame per session.
  * - If a session goes idle (no frames) we stop and GC its adapter.
  * - Reconnect is handled by WS layer; emits will go to the "current" socket.
  */
-export function registerOpenAiStt(ws: WsServerApi) {
+export function registerAzureStt(ws: WsServerApi) {
   const entries = new Map<string, Entry>();
-  const translator = createOpenAiTranslator(ws);
+  const config = loadAzureSpeechConfig();
 
   function ensureEntry(sessionId: string) {
     const existing = entries.get(sessionId);
     if (existing) return existing;
 
-    const adapter = new OpenAIRealtimeTranscriptionAdapter({
+    const adapter = new AzureSpeechSttAdapter({
       sessionId,
+      config,
       emit: (msg) => {
-        if (msg.type === "stt.partial") void translator.onSttPartial(msg);
-        if (msg.type === "stt.final") void translator.onSttFinal(msg);
         ws.emitToSession(sessionId, msg);
       },
       onError: (err) => {
@@ -44,7 +42,6 @@ export function registerOpenAiStt(ws: WsServerApi) {
           recoverable: true,
         });
       },
-      tuning: DEFAULT_SEGMENTATION_TUNING,
     });
 
     adapter.start();
@@ -68,7 +65,6 @@ export function registerOpenAiStt(ws: WsServerApi) {
         scheduleIdleStop(sessionId, cur);
         return;
       }
-      translator.abortSession(sessionId);
       void cur.adapter.stop({ reason: "idle_timeout" });
       entries.delete(sessionId);
     }, DEFAULT_IDLE_STOP_MS);
@@ -87,7 +83,6 @@ export function registerOpenAiStt(ws: WsServerApi) {
     const entry = entries.get(sessionId);
     if (!entry) return;
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
-    translator.abortSession(sessionId);
     void entry.adapter.stop({ reason: reason ?? "client_stop" });
     entries.delete(sessionId);
   });
@@ -97,7 +92,6 @@ export function registerOpenAiStt(ws: WsServerApi) {
     unsubscribeStop();
     for (const [sessionId, entry] of entries) {
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
-      translator.abortSession(sessionId);
       void entry.adapter.stop({ reason: "server_shutdown" });
       entries.delete(sessionId);
     }

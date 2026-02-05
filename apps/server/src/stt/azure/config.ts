@@ -2,7 +2,10 @@ export type AzureSpeechConfig = {
   key: string;
   region: string;
   endpoint?: string;
-  recognitionLanguage?: string;
+  autoDetectLanguages: string[];
+  translationTargets: string[];
+  sampleRateHz?: number;
+  enableDiarization?: boolean;
 };
 
 export function loadAzureSpeechConfig(
@@ -11,7 +14,10 @@ export function loadAzureSpeechConfig(
   const key = env.AZURE_SPEECH_KEY;
   const region = env.AZURE_SPEECH_REGION;
   const endpoint = env.AZURE_SPEECH_ENDPOINT;
-  const recognitionLanguage = env.AZURE_SPEECH_RECOGNITION_LANGUAGE;
+  const autoDetectRaw = env.AZURE_SPEECH_AUTO_DETECT_LANGS;
+  const translationTargetsRaw = env.AZURE_SPEECH_TRANSLATION_TARGETS;
+  const sampleRateRaw = env.AZURE_SPEECH_SAMPLE_RATE_HZ;
+  const enableDiarization = env.AZURE_SPEECH_DIARIZATION === "true";
 
   if (!key || !region) {
     throw new Error(
@@ -19,11 +25,34 @@ export function loadAzureSpeechConfig(
     );
   }
 
+  const autoDetectLanguages = withFallback(
+    splitLangList(autoDetectRaw ?? "de-DE,en-US"),
+    ["de-DE", "en-US"],
+  );
+  const translationTargets = withFallback(
+    splitLangList(translationTargetsRaw ?? "de,en"),
+    ["de", "en"],
+  );
+
   return {
     key,
     region,
     endpoint: endpoint || undefined,
-    recognitionLanguage: recognitionLanguage || undefined,
+    autoDetectLanguages,
+    translationTargets,
+    sampleRateHz: sampleRateRaw ? Number(sampleRateRaw) : undefined,
+    enableDiarization,
   };
+}
+
+function splitLangList(raw: string): string[] {
+  return raw
+    .split(/[,\s]+/g)
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
+}
+
+function withFallback(list: string[], fallback: string[]): string[] {
+  return list.length > 0 ? list : fallback;
 }
 
