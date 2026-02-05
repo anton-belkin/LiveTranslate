@@ -51,6 +51,7 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
   const audioFrameConsumers: AudioFrameConsumer[] = [];
   const sessionStopConsumers: SessionStopConsumer[] = [];
   const lastBackpressureErrorAtBySession = new Map<string, number>();
+  const firstAudioFrameBySession = new Set<string>();
   const registry = createSessionRegistry({
     consumers: () => audioFrameConsumers,
   });
@@ -176,6 +177,13 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
 
       // audio.frame
       const frame: AudioFrame = msg;
+
+      if (!firstAudioFrameBySession.has(frame.sessionId)) {
+        firstAudioFrameBySession.add(frame.sessionId);
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.ts:audio.frame',message:'first audio frame received',data:{sessionId:frame.sessionId,sampleRateHz:frame.sampleRateHz,bytes:frame.pcm16Base64.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+        // #endregion
+      }
 
       // Reconnect handling: allow clients to resume by sending audio.frame with a
       // previously issued sessionId, even if this connection was just created.

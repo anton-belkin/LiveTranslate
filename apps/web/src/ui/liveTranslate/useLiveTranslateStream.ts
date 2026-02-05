@@ -31,6 +31,7 @@ export function useLiveTranslateStream({ url, dispatch }: UseLiveTranslateStream
   const socketRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicStreamerHandle | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const frameCountRef = useRef(0);
 
   const stopMic = useCallback(async () => {
     const mic = micRef.current;
@@ -47,6 +48,13 @@ export function useLiveTranslateStream({ url, dispatch }: UseLiveTranslateStream
           const sessionId = sessionIdRef.current;
           if (!socket || socket.readyState !== WebSocket.OPEN) return;
           if (!sessionId) return;
+
+          frameCountRef.current += 1;
+          if (frameCountRef.current === 1) {
+            // #region agent log
+            fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useLiveTranslateStream.ts:onFrame',message:'first audio frame',data:{sampleRateHz:frame.sampleRateHz,pcm16Bytes:frame.pcm16.byteLength},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+            // #endregion
+          }
 
           const payload: AudioFrame = {
             type: "audio.frame",
@@ -65,7 +73,13 @@ export function useLiveTranslateStream({ url, dispatch }: UseLiveTranslateStream
           }
         },
       });
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useLiveTranslateStream.ts:startMic',message:'mic started',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
     } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useLiveTranslateStream.ts:startMic',message:'startMic error',data:{name:(err as Error | undefined)?.name ?? "unknown",message:String(err)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      // #endregion
       dispatch({
         type: "connection.update",
         status: "error",
@@ -137,6 +151,10 @@ export function useLiveTranslateStream({ url, dispatch }: UseLiveTranslateStream
         });
         return;
       }
+
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useLiveTranslateStream.ts:onmessage',message:'ws message received',data:{type:res.data.type,hasText:('text' in res.data && typeof (res.data as { text?: string }).text === 'string') ? (res.data as { text?: string }).text.length : undefined,hasDelta:('textDelta' in res.data && typeof (res.data as { textDelta?: string }).textDelta === 'string') ? (res.data as { textDelta?: string }).textDelta.length : undefined,lang:('lang' in res.data ? (res.data as { lang?: string }).lang : undefined),from:('from' in res.data ? (res.data as { from?: string }).from : undefined),to:('to' in res.data ? (res.data as { to?: string }).to : undefined)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
 
       if (res.data.type === "server.ready") {
         sessionIdRef.current = res.data.sessionId;

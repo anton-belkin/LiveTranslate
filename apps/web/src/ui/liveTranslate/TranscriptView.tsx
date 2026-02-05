@@ -68,6 +68,10 @@ function collectSegmentText(turn: Turn, lang?: Lang) {
   return { text, isFinal, isPartial };
 }
 
+function otherLang(lang: Lang): Lang {
+  return lang === "de" ? "en" : "de";
+}
+
 export function TranscriptView({ state }: { state: TranscriptState }) {
   const turns = useMemo(
     () =>
@@ -121,54 +125,62 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
 
   const rows = useMemo(() => {
     return groups.map((group) => {
-      const sourceLang = group.lang ?? "de";
-      const originalParts: string[] = [];
-      const translationParts: string[] = [];
-      let originalHasText = false;
-      let originalIsFinal = true;
-      let originalIsPartial = false;
-      let translationHasText = false;
-      let translationIsFinal = true;
-      let translationMissing = false;
+      const deParts: string[] = [];
+      const enParts: string[] = [];
+      let deHasText = false;
+      let enHasText = false;
+      let deIsFinal = true;
+      let enIsFinal = true;
+      let deIsPartial = false;
+      let enIsPartial = false;
+      let deMissing = false;
+      let enMissing = false;
 
       for (const turn of group.turns) {
-        const turnLang = getTurnLang(turn) ?? sourceLang;
+        const turnLang = getTurnLang(turn) ?? "de";
         const original = collectSegmentText(turn, turnLang);
         if (original.text) {
-          originalParts.push(original.text);
-          originalHasText = true;
-          if (!original.isFinal) originalIsFinal = false;
-          if (original.isPartial) originalIsPartial = true;
+          if (turnLang === "de") {
+            deParts.push(original.text);
+            deHasText = true;
+            if (!original.isFinal) deIsFinal = false;
+            if (original.isPartial) deIsPartial = true;
+          } else {
+            enParts.push(original.text);
+            enHasText = true;
+            if (!original.isFinal) enIsFinal = false;
+            if (original.isPartial) enIsPartial = true;
+          }
         }
 
         const translationText = turn.translation?.text?.trim() ?? "";
-        if (translationText) {
-          translationParts.push(translationText);
-          translationHasText = true;
-          if (!turn.translation?.isFinal) translationIsFinal = false;
+        if (translationText && turn.translation?.to) {
+          if (turn.translation.to === "de") {
+            deParts.push(translationText);
+            deHasText = true;
+            if (!turn.translation.isFinal) deIsFinal = false;
+            if (!turn.translation.isFinal) deIsPartial = true;
+          } else {
+            enParts.push(translationText);
+            enHasText = true;
+            if (!turn.translation.isFinal) enIsFinal = false;
+            if (!turn.translation.isFinal) enIsPartial = true;
+          }
         } else if (original.text) {
-          translationMissing = true;
+          const missingLang = otherLang(turnLang);
+          if (missingLang === "de") deMissing = true;
+          else enMissing = true;
         }
       }
 
-      if (translationMissing) translationIsFinal = false;
+      if (deMissing) deIsFinal = false;
+      if (enMissing) enIsFinal = false;
 
-      const originalText = originalParts.join(originalParts.length > 1 ? "\n" : " ");
-      const translationText = translationParts.join(
-        translationParts.length > 1 ? "\n" : " ",
-      );
+      const leftText = deParts.join(deParts.length > 1 ? "\n" : " ");
+      const rightText = enParts.join(enParts.length > 1 ? "\n" : " ");
 
-      const originalPartial = originalHasText && (originalIsPartial || !originalIsFinal);
-      const translationPartial = translationHasText && !translationIsFinal;
-
-      const leftIsTranslation = sourceLang === "en";
-      const rightIsTranslation = !leftIsTranslation;
-
-      const leftText = leftIsTranslation ? translationText : originalText;
-      const rightText = leftIsTranslation ? originalText : translationText;
-
-      const leftPartial = leftIsTranslation ? translationPartial : originalPartial;
-      const rightPartial = leftIsTranslation ? originalPartial : translationPartial;
+      const leftPartial = deHasText && (deIsPartial || !deIsFinal);
+      const rightPartial = enHasText && (enIsPartial || !enIsFinal);
 
       return {
         group,
@@ -176,11 +188,18 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
         rightText,
         leftPartial,
         rightPartial,
-        leftIsTranslation,
-        rightIsTranslation,
+        leftMissing: deMissing,
+        rightMissing: enMissing,
       };
     });
   }, [groups]);
+
+  // #region agent log
+  useEffect(() => {
+    const latest = rows[rows.length - 1];
+    fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'TranscriptView.tsx:rows',message:'rows recomputed',data:{rowsCount:rows.length,leftTextLen:latest?.leftText?.length ?? 0,rightTextLen:latest?.rightText?.length ?? 0,leftMissing:latest?.leftMissing ?? false,rightMissing:latest?.rightMissing ?? false},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+  }, [rows]);
+  // #endregion
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const prevCountRef = useRef(0);
@@ -223,11 +242,11 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
         <div className="bubblesHeader">
           <div className="bubblesColLabel">
             <strong>Deutsch</strong>
-            <span>Original</span>
+            <span>Text</span>
           </div>
           <div className="bubblesColLabel">
             <strong>English</strong>
-            <span>Translation</span>
+            <span>Text</span>
           </div>
         </div>
 
@@ -259,7 +278,7 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
                       {row.leftText}
                       {row.leftPartial ? <span className="cursor">▍</span> : null}
                     </div>
-                  ) : row.leftIsTranslation ? (
+                  ) : row.leftMissing ? (
                     <span className="placeholder">Translation pending…</span>
                   ) : (
                     <span className="placeholder">—</span>
@@ -275,7 +294,7 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
                       {row.rightText}
                       {row.rightPartial ? <span className="cursor">▍</span> : null}
                     </div>
-                  ) : row.rightIsTranslation ? (
+                  ) : row.rightMissing ? (
                     <span className="placeholder">Translation pending…</span>
                   ) : (
                     <span className="placeholder">—</span>
