@@ -12,6 +12,7 @@
   "dependencies": {
     "@livetranslate/shared": "workspace:*",
     "dotenv": "^17.0.0",
+    "microsoft-cognitiveservices-speech-sdk": "^1.47.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import http from "node:http";
 
 import { createWsServer } from "./ws/server.js";
+import { registerAzureStt } from "./stt/registerAzureStt.js";
 import { registerOpenAiStt } from "./stt/registerOpenAiStt.js";
 
 // Load environment variables from `.env` files if present.
@@ -133,7 +134,12 @@ const server = http.createServer(async (req, res) => {
 const ws = createWsServer({ server });
 
 // STT-only milestone: wire streaming transcription into the WS audio pipeline.
-registerOpenAiStt(ws);
+const sttProvider = (process.env.STT_PROVIDER ?? "azure").toLowerCase();
+if (sttProvider === "openai") {
+  registerOpenAiStt(ws);
+} else {
+  registerAzureStt(ws);
+}
 
 server.listen(port);
 

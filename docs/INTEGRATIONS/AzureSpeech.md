@@ -14,6 +14,9 @@ Set these in your server environment or `.env` file (never commit secrets):
 - `AZURE_SPEECH_REGION`: Azure region for the Speech resource, e.g. `eastus`.
 - `AZURE_SPEECH_ENDPOINT`: Optional custom endpoint, if required by your resource.
 - `AZURE_SPEECH_RECOGNITION_LANGUAGE`: Optional locale, e.g. `en-US`.
+- `AZURE_SPEECH_DIARIZATION`: Optional `true|false` (default false) to enable speaker labels if supported by the SDK.
+- `AZURE_SPEECH_SAMPLE_RATE_HZ`: Optional target sample rate for Azure ingestion (default 16000).
+- `STT_PROVIDER`: Optional `azure|openai` (default `azure`) to select the STT provider.
 
 ## Setup steps
 1. Create a Speech resource in the Azure Portal.
