@@ -65,9 +65,11 @@ export const TurnBlock = memo(function TurnBlock({ turn }: { turn: Turn }) {
   const translation = turn.translation;
   const translationNode = useMemo(() => {
     if (!translation?.text?.trim()) return null;
+    const isPartial = !translation.isFinal;
     return (
-      <div className="segParagraph segFinal">
+      <div className={`segParagraph ${isPartial ? "segPartial" : "segFinal"}`}>
         {translation.text}
+        {isPartial ? <span className="cursor">▍</span> : null}
       </div>
     );
   }, [translation]);
