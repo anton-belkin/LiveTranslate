@@ -223,6 +223,9 @@ export class AzureSpeechSttAdapter {
       ? sdk.SpeechTranslationConfig.fromEndpoint(new URL(cfg.endpoint), cfg.key)
       : sdk.SpeechTranslationConfig.fromSubscription(cfg.key, cfg.region);
 
+    const primaryLang = cfg.autoDetectLanguages[0];
+    if (primaryLang) speechConfig.speechRecognitionLanguage = primaryLang;
+
     for (const target of cfg.translationTargets) {
       speechConfig.addTargetLanguage(target);
     }
