@@ -1,4 +1,4 @@
-import { useReducer } from "react";
+import { useReducer, useState } from "react";
 
 import { TranscriptView } from "./liveTranslate/TranscriptView";
 import { makeInitialState, transcriptReducer } from "./liveTranslate/store";
@@ -6,6 +6,7 @@ import { useLiveTranslateStream } from "./liveTranslate/useLiveTranslateStream";
 
 export function App() {
   const [state, dispatch] = useReducer(transcriptReducer, undefined, makeInitialState);
+  const [showOriginal, setShowOriginal] = useState(true);
 
   const stream = useLiveTranslateStream({ url: state.url, dispatch });
 
@@ -54,10 +55,18 @@ export function App() {
           >
             Clear
           </button>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              checked={showOriginal}
+              onChange={(event) => setShowOriginal(event.target.checked)}
+            />
+            <span>Show original</span>
+          </label>
           {state.lastSocketError ? <span className="pill">{state.lastSocketError}</span> : null}
         </div>
 
-        <TranscriptView state={state} />
+        <TranscriptView state={state} showOriginal={showOriginal} />
       </div>
     </div>
   );

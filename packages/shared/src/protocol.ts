@@ -11,7 +11,7 @@ export const PROTOCOL_VERSION = 1 as const;
 // Shared primitives
 // ----------------------------
 
-export const LangSchema = z.enum(["de", "en"]);
+export const LangSchema = z.enum(["de", "en", "ru"]);
 export type Lang = z.infer<typeof LangSchema>;
 
 export const IdSchema = z.string().min(1);

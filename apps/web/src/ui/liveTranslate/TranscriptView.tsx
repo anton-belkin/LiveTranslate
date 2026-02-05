@@ -15,34 +15,27 @@ type BubbleGroup = {
   endMs?: number;
 };
 
+type TranslationRowState = {
+  parts: string[];
+  hasText: boolean;
+  isFinal: boolean;
+  isPartial: boolean;
+  missing: boolean;
+};
+
+const TRANSLATION_COLUMNS: Array<{ lang: Lang; label: string }> = [
+  { lang: "de", label: "Deutsch" },
+  { lang: "en", label: "English" },
+  { lang: "ru", label: "Russian" },
+];
+
 function getTurnLang(turn: Turn): Lang | undefined {
   if (turn.lang) return turn.lang;
-  if (turn.translation?.from) return turn.translation.from;
   for (const segmentId of turn.segmentOrder) {
     const seg = turn.segmentsById[segmentId];
     if (seg?.lang) return seg.lang;
   }
   return undefined;
-}
-
-function getTurnStartMs(turn: Turn) {
-  if (typeof turn.startMs === "number") return turn.startMs;
-  for (const segmentId of turn.segmentOrder) {
-    const seg = turn.segmentsById[segmentId];
-    if (seg && typeof seg.startMs === "number") return seg.startMs;
-  }
-  return undefined;
-}
-
-function getTurnEndMs(turn: Turn) {
-  if (typeof turn.endMs === "number") return turn.endMs;
-  let latest: number | undefined = undefined;
-  for (const segmentId of turn.segmentOrder) {
-    const seg = turn.segmentsById[segmentId];
-    const t = typeof seg?.endMs === "number" ? seg.endMs : seg?.startMs;
-    if (typeof t === "number") latest = latest === undefined ? t : Math.max(latest, t);
-  }
-  return latest;
 }
 
 function collectSegmentText(turn: Turn, lang?: Lang) {
@@ -68,11 +61,33 @@ function collectSegmentText(turn: Turn, lang?: Lang) {
   return { text, isFinal, isPartial };
 }
 
-function otherLang(lang: Lang): Lang {
-  return lang === "de" ? "en" : "de";
+function getTurnStartMs(turn: Turn) {
+  if (typeof turn.startMs === "number") return turn.startMs;
+  for (const segmentId of turn.segmentOrder) {
+    const seg = turn.segmentsById[segmentId];
+    if (seg && typeof seg.startMs === "number") return seg.startMs;
+  }
+  return undefined;
 }
 
-export function TranscriptView({ state }: { state: TranscriptState }) {
+function getTurnEndMs(turn: Turn) {
+  if (typeof turn.endMs === "number") return turn.endMs;
+  let latest: number | undefined = undefined;
+  for (const segmentId of turn.segmentOrder) {
+    const seg = turn.segmentsById[segmentId];
+    const t = typeof seg?.endMs === "number" ? seg.endMs : seg?.startMs;
+    if (typeof t === "number") latest = latest === undefined ? t : Math.max(latest, t);
+  }
+  return latest;
+}
+
+export function TranscriptView({
+  state,
+  showOriginal,
+}: {
+  state: TranscriptState;
+  showOriginal: boolean;
+}) {
   const turns = useMemo(
     () =>
       state.turnOrder
@@ -125,71 +140,85 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
 
   const rows = useMemo(() => {
     return groups.map((group) => {
-      const deParts: string[] = [];
-      const enParts: string[] = [];
-      let deHasText = false;
-      let enHasText = false;
-      let deIsFinal = true;
-      let enIsFinal = true;
-      let deIsPartial = false;
-      let enIsPartial = false;
-      let deMissing = false;
-      let enMissing = false;
+      const originalParts: string[] = [];
+      let originalHasText = false;
+      let originalIsFinal = true;
+      let originalIsPartial = false;
+
+      const translations: Record<Lang, TranslationRowState> = {
+        de: { parts: [], hasText: false, isFinal: true, isPartial: false, missing: false },
+        en: { parts: [], hasText: false, isFinal: true, isPartial: false, missing: false },
+        ru: { parts: [], hasText: false, isFinal: true, isPartial: false, missing: false },
+      };
 
       for (const turn of group.turns) {
-        const turnLang = getTurnLang(turn) ?? "de";
-        const original = collectSegmentText(turn, turnLang);
+        const original = collectSegmentText(turn);
+        const turnLang = getTurnLang(turn);
         if (original.text) {
-          if (turnLang === "de") {
-            deParts.push(original.text);
-            deHasText = true;
-            if (!original.isFinal) deIsFinal = false;
-            if (original.isPartial) deIsPartial = true;
-          } else {
-            enParts.push(original.text);
-            enHasText = true;
-            if (!original.isFinal) enIsFinal = false;
-            if (original.isPartial) enIsPartial = true;
-          }
+          originalParts.push(original.text);
+          originalHasText = true;
+          if (!original.isFinal) originalIsFinal = false;
+          if (original.isPartial) originalIsPartial = true;
         }
 
-        const translationText = turn.translation?.text?.trim() ?? "";
-        if (translationText && turn.translation?.to) {
-          if (turn.translation.to === "de") {
-            deParts.push(translationText);
-            deHasText = true;
-            if (!turn.translation.isFinal) deIsFinal = false;
-            if (!turn.translation.isFinal) deIsPartial = true;
-          } else {
-            enParts.push(translationText);
-            enHasText = true;
-            if (!turn.translation.isFinal) enIsFinal = false;
-            if (!turn.translation.isFinal) enIsPartial = true;
+        for (const { lang } of TRANSLATION_COLUMNS) {
+          const translation = turn.translationsByLang?.[lang];
+          const translatedText = translation?.text?.trim();
+          if (translation && translatedText) {
+            translations[lang].parts.push(translatedText);
+            translations[lang].hasText = true;
+            if (!translation.isFinal) translations[lang].isFinal = false;
+            if (!translation.isFinal) translations[lang].isPartial = true;
+            continue;
           }
-        } else if (original.text) {
-          const missingLang = otherLang(turnLang);
-          if (missingLang === "de") deMissing = true;
-          else enMissing = true;
+
+          if (turnLang === lang) {
+            const source = collectSegmentText(turn, lang);
+            if (source.text) {
+              translations[lang].parts.push(source.text);
+              translations[lang].hasText = true;
+              if (!source.isFinal) translations[lang].isFinal = false;
+              if (source.isPartial) translations[lang].isPartial = true;
+              continue;
+            }
+          }
+
+          if (original.text) {
+            translations[lang].missing = true;
+          }
         }
       }
 
-      if (deMissing) deIsFinal = false;
-      if (enMissing) enIsFinal = false;
+      for (const { lang } of TRANSLATION_COLUMNS) {
+        if (translations[lang].missing) translations[lang].isFinal = false;
+      }
 
-      const leftText = deParts.join(deParts.length > 1 ? "\n" : " ");
-      const rightText = enParts.join(enParts.length > 1 ? "\n" : " ");
+      const originalText = originalParts.join(originalParts.length > 1 ? "\n" : " ");
+      const originalPartial = originalHasText && (originalIsPartial || !originalIsFinal);
 
-      const leftPartial = deHasText && (deIsPartial || !deIsFinal);
-      const rightPartial = enHasText && (enIsPartial || !enIsFinal);
+      const translationsByLang = TRANSLATION_COLUMNS.reduce(
+        (acc, { lang }) => {
+          const text = translations[lang].parts.join(
+            translations[lang].parts.length > 1 ? "\n" : " ",
+          );
+          const partial = translations[lang].hasText
+            ? translations[lang].isPartial || !translations[lang].isFinal
+            : false;
+          acc[lang] = {
+            text,
+            partial,
+            missing: translations[lang].missing,
+          };
+          return acc;
+        },
+        {} as Record<Lang, { text: string; partial: boolean; missing: boolean }>,
+      );
 
       return {
         group,
-        leftText,
-        rightText,
-        leftPartial,
-        rightPartial,
-        leftMissing: deMissing,
-        rightMissing: enMissing,
+        originalText,
+        originalPartial,
+        translationsByLang,
       };
     });
   }, [groups]);
@@ -197,7 +226,10 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
   // #region agent log
   useEffect(() => {
     const latest = rows[rows.length - 1];
-    fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'TranscriptView.tsx:rows',message:'rows recomputed',data:{rowsCount:rows.length,leftTextLen:latest?.leftText?.length ?? 0,rightTextLen:latest?.rightText?.length ?? 0,leftMissing:latest?.leftMissing ?? false,rightMissing:latest?.rightMissing ?? false},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+    const deTextLen = latest?.translationsByLang.de.text.length ?? 0;
+    const enTextLen = latest?.translationsByLang.en.text.length ?? 0;
+    const ruTextLen = latest?.translationsByLang.ru.text.length ?? 0;
+    fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'TranscriptView.tsx:rows',message:'rows recomputed',data:{rowsCount:rows.length,originalLen:latest?.originalText?.length ?? 0,deLen:deTextLen,enLen:enTextLen,ruLen:ruTextLen},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
   }, [rows]);
   // #endregion
 
@@ -239,15 +271,19 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
   return (
     <div className="card main">
       <div className="bubbles">
-        <div className="bubblesHeader">
-          <div className="bubblesColLabel">
-            <strong>Deutsch</strong>
-            <span>Text</span>
-          </div>
-          <div className="bubblesColLabel">
-            <strong>English</strong>
-            <span>Text</span>
-          </div>
+        <div className={`bubblesHeader ${showOriginal ? "cols-4" : "cols-3"}`}>
+          {showOriginal ? (
+            <div className="bubblesColLabel">
+              <strong>Original</strong>
+              <span>Text</span>
+            </div>
+          ) : null}
+          {TRANSLATION_COLUMNS.map((col) => (
+            <div key={col.lang} className="bubblesColLabel">
+              <strong>{col.label}</strong>
+              <span>Text</span>
+            </div>
+          ))}
         </div>
 
         {state.lastServerError ? (
@@ -268,38 +304,47 @@ export function TranscriptView({ state }: { state: TranscriptState }) {
             rows.map((row) => (
               <div
                 key={row.group.groupId}
-                className="bubbleRow"
+                className={`bubbleRow ${showOriginal ? "cols-4" : "cols-3"}`}
                 data-speaker-id={row.group.speakerId ?? ""}
                 data-turn-count={row.group.turns.length}
               >
-                <div className="bubbleCell">
-                  {row.leftText ? (
-                    <div className={`bubble ${row.leftPartial ? "segPartial" : "segFinal"}`}>
-                      {row.leftText}
-                      {row.leftPartial ? <span className="cursor">▍</span> : null}
+                {showOriginal ? (
+                  <div className="bubbleCell">
+                    {row.originalText ? (
+                      <div
+                        className={`bubble ${
+                          row.originalPartial ? "segPartial" : "segFinal"
+                        }`}
+                      >
+                        {row.originalText}
+                        {row.originalPartial ? <span className="cursor">▍</span> : null}
+                      </div>
+                    ) : (
+                      <span className="placeholder">—</span>
+                    )}
+                  </div>
+                ) : null}
+                {TRANSLATION_COLUMNS.map((col) => {
+                  const cell = row.translationsByLang[col.lang];
+                  return (
+                    <div key={`${row.group.groupId}-${col.lang}`} className="bubbleCell">
+                      {cell.text ? (
+                        <div
+                          className={`bubble bubbleAlt ${
+                            cell.partial ? "segPartial" : "segFinal"
+                          }`}
+                        >
+                          {cell.text}
+                          {cell.partial ? <span className="cursor">▍</span> : null}
+                        </div>
+                      ) : cell.missing ? (
+                        <span className="placeholder">Translation pending…</span>
+                      ) : (
+                        <span className="placeholder">—</span>
+                      )}
                     </div>
-                  ) : row.leftMissing ? (
-                    <span className="placeholder">Translation pending…</span>
-                  ) : (
-                    <span className="placeholder">—</span>
-                  )}
-                </div>
-                <div className="bubbleCell">
-                  {row.rightText ? (
-                    <div
-                      className={`bubble bubbleAlt ${
-                        row.rightPartial ? "segPartial" : "segFinal"
-                      }`}
-                    >
-                      {row.rightText}
-                      {row.rightPartial ? <span className="cursor">▍</span> : null}
-                    </div>
-                  ) : row.rightMissing ? (
-                    <span className="placeholder">Translation pending…</span>
-                  ) : (
-                    <span className="placeholder">—</span>
-                  )}
-                </div>
+                  );
+                })}
               </div>
             ))
           )}

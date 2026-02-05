@@ -43,7 +43,7 @@ export type Turn = {
   isFinal: boolean;
   segmentsById: Record<string, Segment>;
   segmentOrder: string[];
-  translation?: TurnTranslation;
+  translationsByLang?: Partial<Record<Lang, TurnTranslation>>;
 };
 
 export type TranscriptState = {
@@ -268,7 +268,7 @@ export function transcriptReducer(
           sessionId: msg.sessionId,
         });
         const turn = nextState.turnsById[msg.turnId];
-        const prev = turn.translation;
+        const prev = turn.translationsByLang?.[msg.to];
 
         // Ignore exact duplicate deltas.
         if (
@@ -293,13 +293,16 @@ export function transcriptReducer(
 
         const updatedTurn: Turn = {
           ...turn,
-          translation: {
-            segmentId: msg.segmentId,
-            from: msg.from,
-            to: msg.to,
-            text: nextText,
-            isFinal: false,
-            lastDelta: msg.textDelta,
+          translationsByLang: {
+            ...turn.translationsByLang,
+            [msg.to]: {
+              segmentId: msg.segmentId,
+              from: msg.from,
+              to: msg.to,
+              text: nextText,
+              isFinal: false,
+              lastDelta: msg.textDelta,
+            },
           },
         };
 
@@ -317,7 +320,7 @@ export function transcriptReducer(
           sessionId: msg.sessionId,
         });
         const turn = nextState.turnsById[msg.turnId];
-        const prev = turn.translation;
+        const prev = turn.translationsByLang?.[msg.to];
 
         if (
           prev &&
@@ -332,12 +335,15 @@ export function transcriptReducer(
 
         const updatedTurn: Turn = {
           ...turn,
-          translation: {
-            segmentId: msg.segmentId,
-            from: msg.from,
-            to: msg.to,
-            text: msg.text,
-            isFinal: true,
+          translationsByLang: {
+            ...turn.translationsByLang,
+            [msg.to]: {
+              segmentId: msg.segmentId,
+              from: msg.from,
+              to: msg.to,
+              text: msg.text,
+              isFinal: true,
+            },
           },
         };
 
@@ -355,7 +361,7 @@ export function transcriptReducer(
           sessionId: msg.sessionId,
         });
         const turn = nextState.turnsById[msg.turnId];
-        const prev = turn.translation;
+        const prev = turn.translationsByLang?.[msg.to];
 
         if (
           prev &&
@@ -370,12 +376,15 @@ export function transcriptReducer(
 
         const updatedTurn: Turn = {
           ...turn,
-          translation: {
-            segmentId: msg.segmentId,
-            from: msg.from,
-            to: msg.to,
-            text: msg.fullText,
-            isFinal: false,
+          translationsByLang: {
+            ...turn.translationsByLang,
+            [msg.to]: {
+              segmentId: msg.segmentId,
+              from: msg.from,
+              to: msg.to,
+              text: msg.fullText,
+              isFinal: false,
+            },
           },
         };
 

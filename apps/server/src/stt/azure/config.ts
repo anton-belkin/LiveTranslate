@@ -25,13 +25,19 @@ export function loadAzureSpeechConfig(
     );
   }
 
-  const autoDetectLanguages = withFallback(
-    splitLangList(autoDetectRaw ?? "de-DE,en-US"),
-    ["de-DE", "en-US"],
+  const autoDetectLanguages = ensureLang(
+    withFallback(
+      splitLangList(autoDetectRaw ?? "de-DE,en-US,ru-RU"),
+      ["de-DE", "en-US", "ru-RU"],
+    ),
+    "ru-RU",
   );
-  const translationTargets = withFallback(
-    splitLangList(translationTargetsRaw ?? "de,en"),
-    ["de", "en"],
+  const translationTargets = ensureLang(
+    withFallback(
+      splitLangList(translationTargetsRaw ?? "de,en,ru"),
+      ["de", "en", "ru"],
+    ),
+    "ru",
   );
 
   return {
@@ -54,5 +60,10 @@ function splitLangList(raw: string): string[] {
 
 function withFallback(list: string[], fallback: string[]): string[] {
   return list.length > 0 ? list : fallback;
+}
+
+function ensureLang(list: string[], lang: string): string[] {
+  const exists = list.some((entry) => entry.toLowerCase() === lang.toLowerCase());
+  return exists ? list : [...list, lang];
 }
 

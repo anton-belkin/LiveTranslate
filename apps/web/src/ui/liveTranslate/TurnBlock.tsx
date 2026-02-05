@@ -2,7 +2,7 @@ import { memo, useMemo } from "react";
 
 import type { Lang } from "@livetranslate/shared";
 
-import type { Turn } from "./store";
+import type { Turn, TurnTranslation } from "./store";
 
 function formatSeconds(ms?: number) {
   if (ms === undefined) return "—";
@@ -62,17 +62,23 @@ export const TurnBlock = memo(function TurnBlock({ turn }: { turn: Turn }) {
   const showInDe = placement === "de";
   const showInEn = placement === "en";
 
-  const translation = turn.translation;
-  const translationNode = useMemo(() => {
-    if (!translation?.text?.trim()) return null;
-    const isPartial = !translation.isFinal;
-    return (
-      <div className={`segParagraph ${isPartial ? "segPartial" : "segFinal"}`}>
-        {translation.text}
-        {isPartial ? <span className="cursor">▍</span> : null}
-      </div>
-    );
-  }, [translation]);
+  const translationNodeByLang = useMemo(() => {
+    const buildNode = (translation?: TurnTranslation) => {
+      if (!translation?.text?.trim()) return null;
+      const isPartial = !translation.isFinal;
+      return (
+        <div className={`segParagraph ${isPartial ? "segPartial" : "segFinal"}`}>
+          {translation.text}
+          {isPartial ? <span className="cursor">▍</span> : null}
+        </div>
+      );
+    };
+
+    return {
+      de: buildNode(turn.translationsByLang?.de),
+      en: buildNode(turn.translationsByLang?.en),
+    };
+  }, [turn.translationsByLang]);
 
   return (
     <div className="turn">
@@ -107,7 +113,7 @@ export const TurnBlock = memo(function TurnBlock({ turn }: { turn: Turn }) {
               <span className="placeholder">—</span>
             )
           ) : (
-            translationNode ?? <span className="placeholder">Translation pending…</span>
+            translationNodeByLang.de ?? <span className="placeholder">Translation pending…</span>
           )}
         </div>
 
@@ -119,7 +125,7 @@ export const TurnBlock = memo(function TurnBlock({ turn }: { turn: Turn }) {
               <span className="placeholder">—</span>
             )
           ) : (
-            translationNode ?? <span className="placeholder">Translation pending…</span>
+            translationNodeByLang.en ?? <span className="placeholder">Translation pending…</span>
           )}
         </div>
       </div>

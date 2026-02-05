@@ -21,6 +21,7 @@ function toLang(locale?: string): Lang | undefined {
   const l = locale.toLowerCase();
   if (l === "de" || l.startsWith("de-")) return "de";
   if (l === "en" || l.startsWith("en-")) return "en";
+  if (l === "ru" || l.startsWith("ru-")) return "ru";
   return undefined;
 }
 
@@ -71,6 +72,7 @@ export class AzureSpeechSttAdapter {
   private readonly config: AzureSpeechConfig;
   private readonly targetSampleRateHz: number;
   private readonly enableDiarization: boolean;
+  private readonly translationTargets: Lang[];
 
   private recognizer: sdk.TranslationRecognizer | null = null;
   private diarizationRecognizer: sdk.ConversationTranscriber | null = null;
@@ -84,9 +86,8 @@ export class AzureSpeechSttAdapter {
   private lastPartialText = "";
 
   private currentFromLang: Lang | undefined = undefined;
-  private currentToLang: Lang | undefined = undefined;
-  private lastTranslationText = "";
-  private translationRevision = 0;
+  private lastTranslationTextByLang: Partial<Record<Lang, string>> = {};
+  private translationRevisionByLang: Partial<Record<Lang, number>> = {};
 
   private pendingSpeakerId: string | undefined = undefined;
   private pendingSpeakerAtMs: number | undefined = undefined;
@@ -103,6 +104,9 @@ export class AzureSpeechSttAdapter {
     this.config = args.config;
     this.targetSampleRateHz = clampSampleRate(args.config.sampleRateHz);
     this.enableDiarization = Boolean(args.config.enableDiarization);
+    this.translationTargets = args.config.translationTargets
+      .map((target) => toLang(target))
+      .filter((lang): lang is Lang => Boolean(lang));
   }
 
   start() {
@@ -272,8 +276,7 @@ export class AzureSpeechSttAdapter {
       const offsetMs = toMs(result.offset);
       const turnId = this.ensureTurn(offsetMs);
       const from = this.resolveFromLang(result);
-      const to = from ? otherLang(from) : undefined;
-      if (from && !this.currentToLang) this.currentToLang = to;
+      if (!from) return;
 
       if (text && text !== this.lastPartialText) {
         this.lastPartialText = text;
@@ -288,16 +291,16 @@ export class AzureSpeechSttAdapter {
         });
       }
 
-      if (from && to) {
+      for (const target of this.translationTargets) {
         const translation = getTranslationText({
           result,
-          target: to,
+          target,
         });
         if (translation) {
           this.emitTranslatePartial({
             turnId,
             from,
-            to,
+            to: target,
             text: translation,
           });
         }
@@ -324,8 +327,7 @@ export class AzureSpeechSttAdapter {
         this.pendingEndMs ?? (offsetMs != null ? offsetMs + durationMs : startMs);
       const turnId = this.ensureTurn(startMs);
       const from = this.resolveFromLang(result);
-      const to = from ? otherLang(from) : undefined;
-      if (from && !this.currentToLang) this.currentToLang = to;
+      if (!from) return;
 
       this.emit({
         type: "stt.final",
@@ -338,33 +340,30 @@ export class AzureSpeechSttAdapter {
         endMs,
       });
 
-      if (from && to) {
+      for (const target of this.translationTargets) {
         const translation = getTranslationText({
           result,
-          target: to,
+          target,
         });
-        const finalText = translation ?? this.lastTranslationText;
+        const prevText = this.lastTranslationTextByLang[target] ?? "";
+        const finalText = translation ?? prevText;
         if (finalText) {
-          if (
-            translation &&
-            this.lastTranslationText &&
-            !translation.startsWith(this.lastTranslationText)
-          ) {
+          if (translation && prevText && !translation.startsWith(prevText)) {
             this.emitTranslateRevise({
               turnId,
               from,
-              to,
+              to: target,
               text: translation,
             });
           }
-          this.lastTranslationText = finalText;
+          this.lastTranslationTextByLang[target] = finalText;
           this.emit({
             type: "translate.final",
             sessionId: this.sessionId,
             turnId,
             segmentId: turnId,
             from,
-            to,
+            to: target,
             text: finalText,
           });
         }
@@ -465,9 +464,9 @@ export class AzureSpeechSttAdapter {
     const nextText = args.text;
     if (!nextText || nextText.trim().length === 0) return;
 
-    const prev = this.lastTranslationText;
+    const prev = this.lastTranslationTextByLang[args.to] ?? "";
     if (!prev) {
-      this.lastTranslationText = nextText;
+      this.lastTranslationTextByLang[args.to] = nextText;
       this.emit({
         type: "translate.partial",
         sessionId: this.sessionId,
@@ -493,7 +492,7 @@ export class AzureSpeechSttAdapter {
           textDelta: delta,
         });
       }
-      this.lastTranslationText = nextText;
+      this.lastTranslationTextByLang[args.to] = nextText;
       return;
     }
 
@@ -503,7 +502,7 @@ export class AzureSpeechSttAdapter {
       to: args.to,
       text: nextText,
     });
-    this.lastTranslationText = nextText;
+    this.lastTranslationTextByLang[args.to] = nextText;
   }
 
   private emitTranslateRevise(args: {
@@ -512,7 +511,8 @@ export class AzureSpeechSttAdapter {
     to: Lang;
     text: string;
   }) {
-    this.translationRevision += 1;
+    this.translationRevisionByLang[args.to] =
+      (this.translationRevisionByLang[args.to] ?? 0) + 1;
     this.emit({
       type: "translate.revise",
       sessionId: this.sessionId,
@@ -520,7 +520,7 @@ export class AzureSpeechSttAdapter {
       segmentId: args.turnId,
       from: args.from,
       to: args.to,
-      revision: this.translationRevision,
+      revision: this.translationRevisionByLang[args.to] ?? 0,
       fullText: args.text,
     });
   }
@@ -594,16 +594,20 @@ export class AzureSpeechSttAdapter {
         endMs,
       });
     }
-    if (this.lastTranslationText && this.currentFromLang && this.currentToLang) {
-      this.emit({
-        type: "translate.final",
-        sessionId: this.sessionId,
-        turnId,
-        segmentId: turnId,
-        from: this.currentFromLang,
-        to: this.currentToLang,
-        text: this.lastTranslationText,
-      });
+    if (this.currentFromLang) {
+      for (const target of this.translationTargets) {
+        const text = this.lastTranslationTextByLang[target];
+        if (!text) continue;
+        this.emit({
+          type: "translate.final",
+          sessionId: this.sessionId,
+          turnId,
+          segmentId: turnId,
+          from: this.currentFromLang,
+          to: target,
+          text,
+        });
+      }
     }
     this.emit({
       type: "turn.final",
@@ -623,9 +627,8 @@ export class AzureSpeechSttAdapter {
     this.currentSpeakerId = undefined;
     this.lastPartialText = "";
     this.currentFromLang = undefined;
-    this.currentToLang = undefined;
-    this.lastTranslationText = "";
-    this.translationRevision = 0;
+    this.lastTranslationTextByLang = {};
+    this.translationRevisionByLang = {};
   }
 
   private handleStartError(err: unknown) {
