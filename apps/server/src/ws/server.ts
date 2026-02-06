@@ -11,6 +11,17 @@ import {
 import { createSessionRegistry } from "./sessionRegistry.js";
 import type { AudioFrameConsumer, Session, SessionStopConsumer } from "./types.js";
 
+const DEBUG_LOGS = process.env.LIVETRANSLATE_DEBUG_LOGS === "true";
+
+function debugLog(payload: Record<string, unknown>) {
+  if (!DEBUG_LOGS) return;
+  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
+
 function safeJsonParse(input: string): { ok: true; value: unknown } | { ok: false } {
   try {
     return { ok: true, value: JSON.parse(input) as unknown };
@@ -58,12 +69,59 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
 
   function emitToSocket(socket: WebSocket, msg: ServerToClientMessage) {
     const parsed = safeParseServerMessage(msg);
-    if (!parsed.success) return false;
-    if (socket.readyState !== WebSocket.OPEN) return false;
+    if (!parsed.success) {
+      // #region agent log
+      debugLog({
+        location: "server.ts:emitToSocket",
+        message: "server msg failed schema",
+        data: {
+          type: (msg as { type?: string }).type ?? null,
+          issueCount: parsed.error.issues.length,
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path,
+            code: issue.code,
+            message: issue.message,
+            expected: issue.expected,
+            received: issue.received,
+          })),
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H4",
+      });
+      // #endregion
+      return false;
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
+      // #region agent log
+      debugLog({
+        location: "server.ts:emitToSocket",
+        message: "socket not open",
+        data: { type: parsed.data.type, readyState: socket.readyState },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H4",
+      });
+      // #endregion
+      return false;
+    }
     try {
       socket.send(JSON.stringify(parsed.data));
       return true;
     } catch {
+      // #region agent log
+      debugLog({
+        location: "server.ts:emitToSocket",
+        message: "socket.send threw",
+        data: { type: parsed.data.type },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H4",
+      });
+      // #endregion
       return false;
     }
   }
@@ -183,7 +241,19 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
       if (!firstAudioFrameBySession.has(frame.sessionId)) {
         firstAudioFrameBySession.add(frame.sessionId);
         // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.ts:audio.frame',message:'first audio frame received',data:{sessionId:frame.sessionId,sampleRateHz:frame.sampleRateHz,bytes:frame.pcm16Base64.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+        debugLog({
+          location: "server.ts:audio.frame",
+          message: "first audio frame received",
+          data: {
+            sessionId: frame.sessionId,
+            sampleRateHz: frame.sampleRateHz,
+            bytes: frame.pcm16Base64.length,
+          },
+          timestamp: Date.now(),
+          sessionId: "debug-session",
+          runId: "run1",
+          hypothesisId: "H2",
+        });
         // #endregion
       }
 

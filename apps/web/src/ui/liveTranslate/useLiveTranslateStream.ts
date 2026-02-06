@@ -12,6 +12,17 @@ import { startMicStreamer, type MicStreamerHandle } from "../../audio/micStreame
 import { base64FromArrayBuffer } from "../../lib/base64";
 import type { TranscriptAction } from "./store";
 
+const DEBUG_LOGS = import.meta.env.VITE_DEBUG_LOGS === "true";
+
+function debugLog(payload: Record<string, unknown>) {
+  if (!DEBUG_LOGS) return;
+  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
+
 type UseLiveTranslateStreamArgs = {
   url: string;
   dispatch: Dispatch<TranscriptAction>;
@@ -62,7 +73,15 @@ export function useLiveTranslateStream({
           frameCountRef.current += 1;
           if (frameCountRef.current === 1) {
             // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useLiveTranslateStream.ts:onFrame',message:'first audio frame',data:{sampleRateHz:frame.sampleRateHz,pcm16Bytes:frame.pcm16.byteLength},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+            debugLog({
+              location: "useLiveTranslateStream.ts:onFrame",
+              message: "first audio frame",
+              data: { sampleRateHz: frame.sampleRateHz, pcm16Bytes: frame.pcm16.byteLength },
+              timestamp: Date.now(),
+              sessionId: "debug-session",
+              runId: "run1",
+              hypothesisId: "H1",
+            });
             // #endregion
           }
 
@@ -84,11 +103,30 @@ export function useLiveTranslateStream({
         },
       });
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useLiveTranslateStream.ts:startMic',message:'mic started',data:{},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+      debugLog({
+        location: "useLiveTranslateStream.ts:startMic",
+        message: "mic started",
+        data: {},
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H1",
+      });
       // #endregion
     } catch (err) {
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useLiveTranslateStream.ts:startMic',message:'startMic error',data:{name:(err as Error | undefined)?.name ?? "unknown",message:String(err)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+      debugLog({
+        location: "useLiveTranslateStream.ts:startMic",
+        message: "startMic error",
+        data: {
+          name: (err as Error | undefined)?.name ?? "unknown",
+          message: String(err),
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "D",
+      });
       // #endregion
       dispatch({
         type: "connection.update",
@@ -163,7 +201,29 @@ export function useLiveTranslateStream({
       }
 
       // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useLiveTranslateStream.ts:onmessage',message:'ws message received',data:{type:res.data.type,hasText:('text' in res.data && typeof (res.data as { text?: string }).text === 'string') ? (res.data as { text?: string }).text.length : undefined,hasDelta:('textDelta' in res.data && typeof (res.data as { textDelta?: string }).textDelta === 'string') ? (res.data as { textDelta?: string }).textDelta.length : undefined,lang:('lang' in res.data ? (res.data as { lang?: string }).lang : undefined),from:('from' in res.data ? (res.data as { from?: string }).from : undefined),to:('to' in res.data ? (res.data as { to?: string }).to : undefined)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+      debugLog({
+        location: "useLiveTranslateStream.ts:onmessage",
+        message: "ws message received",
+        data: {
+          type: res.data.type,
+          hasText:
+            "text" in res.data && typeof (res.data as { text?: string }).text === "string"
+              ? (res.data as { text?: string }).text.length
+              : undefined,
+          hasDelta:
+            "textDelta" in res.data &&
+            typeof (res.data as { textDelta?: string }).textDelta === "string"
+              ? (res.data as { textDelta?: string }).textDelta.length
+              : undefined,
+          lang: "lang" in res.data ? (res.data as { lang?: string }).lang : undefined,
+          from: "from" in res.data ? (res.data as { from?: string }).from : undefined,
+          to: "to" in res.data ? (res.data as { to?: string }).to : undefined,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H1",
+      });
       // #endregion
 
       if (res.data.type === "server.ready") {

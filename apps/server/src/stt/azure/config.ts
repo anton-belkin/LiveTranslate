@@ -8,6 +8,17 @@ export type AzureSpeechConfig = {
   enableDiarization?: boolean;
 };
 
+const DEBUG_LOGS = process.env.LIVETRANSLATE_DEBUG_LOGS === "true";
+
+function debugLog(payload: Record<string, unknown>) {
+  if (!DEBUG_LOGS) return;
+  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
+
 export function loadAzureSpeechConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): AzureSpeechConfig {
@@ -33,6 +44,23 @@ export function loadAzureSpeechConfig(
     splitLangList(translationTargetsRaw ?? "de,en"),
     ["de", "en"],
   );
+
+  // #region agent log
+  debugLog({
+    location: "azure/config.ts:loadAzureSpeechConfig",
+    message: "loaded azure speech config",
+    data: {
+      autoDetectLanguages,
+      translationTargets,
+      sampleRateHz: sampleRateRaw ? Number(sampleRateRaw) : null,
+      enableDiarization,
+    },
+    timestamp: Date.now(),
+    sessionId: "debug-session",
+    runId: "run1",
+    hypothesisId: "H3",
+  });
+  // #endregion
 
   return {
     key,

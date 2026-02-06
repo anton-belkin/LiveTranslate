@@ -28,6 +28,16 @@ type AdapterState = "idle" | "starting" | "open" | "stopping" | "stopped";
 
 const DEFAULT_TARGET_SAMPLE_RATE_HZ = 16_000;
 const SPEAKER_RECENT_MS = 3000;
+const DEBUG_LOGS = process.env.LIVETRANSLATE_DEBUG_LOGS === "true";
+
+function debugLog(payload: Record<string, unknown>) {
+  if (!DEBUG_LOGS) return;
+  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
 
 function toMs(ticks?: number) {
   if (!Number.isFinite(ticks)) return undefined;
@@ -387,20 +397,40 @@ export class AzureSpeechSttAdapter {
 
   private resolveFromLang(result: sdk.SpeechRecognitionResult): Lang | undefined {
     let detected: Lang | undefined;
+    let autoLang: string | undefined;
+    let resultLang: string | undefined;
     try {
       const auto = sdk.AutoDetectSourceLanguageResult.fromResult(
         result,
       );
-      detected = toLang(auto?.language);
+      autoLang = auto?.language;
+      detected = toLang(autoLang);
     } catch {
       // ignore
     }
 
     if (!detected && typeof (result as { language?: string }).language === "string") {
-      detected = toLang((result as { language?: string }).language);
+      resultLang = (result as { language?: string }).language;
+      detected = toLang(resultLang);
     }
 
     if (detected && !this.currentFromLang) this.currentFromLang = detected;
+    // #region agent log
+    debugLog({
+      location: "azureSpeechSttAdapter.ts:resolveFromLang",
+      message: "resolved speech language",
+      data: {
+        autoLang: autoLang ?? null,
+        resultLang: resultLang ?? null,
+        detected: detected ?? null,
+        currentFromLang: this.currentFromLang ?? null,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H3",
+    });
+    // #endregion
     return this.currentFromLang ?? detected;
   }
 

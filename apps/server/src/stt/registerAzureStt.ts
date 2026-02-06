@@ -9,6 +9,17 @@ import {
   type TranslationHistoryEntry,
 } from "../translate/groq/groqTranslate.js";
 
+const DEBUG_LOGS = process.env.LIVETRANSLATE_DEBUG_LOGS === "true";
+
+function debugLog(payload: Record<string, unknown>) {
+  if (!DEBUG_LOGS) return;
+  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
+
 const DEFAULT_IDLE_STOP_MS = 30_000;
 
 type Entry = {
@@ -172,6 +183,24 @@ export function registerAzureStt(ws: WsServerApi) {
 
     let result: { translations: Record<string, string>; summary?: string };
     try {
+      // #region agent log
+      debugLog({
+        location: "registerAzureStt.ts:preTranslate",
+        message: "calling groqTranslate",
+        data: {
+          kind: evt.kind,
+          lang: evt.lang ?? null,
+          textLen: text.length,
+          targetLangs: entry.targetLangs,
+          summaryLen: entry.summary.length,
+          historyLen: entry.history.length,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H1",
+      });
+      // #endregion
       result = await groqTranslate(groqConfig, {
         utteranceText: text,
         isFinal: evt.kind === "final",
@@ -193,6 +222,22 @@ export function registerAzureStt(ws: WsServerApi) {
     }
 
     if (evt.kind === "partial" && entry.latestSeqByTurn.get(evt.turnId) !== seq) return;
+    // #region agent log
+    debugLog({
+      location: "registerAzureStt.ts:postTranslate",
+      message: "groqTranslate result",
+      data: {
+        kind: evt.kind,
+        lang: evt.lang ?? null,
+        translationKeys: Object.keys(result.translations ?? {}),
+        summaryLen: typeof result.summary === "string" ? result.summary.length : 0,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H1",
+    });
+    // #endregion
 
     const fromLang = (evt.lang ?? "und") as Lang;
     const translations: Record<string, string> = {};
@@ -209,7 +254,7 @@ export function registerAzureStt(ws: WsServerApi) {
         const revKey = `${evt.turnId}:${key}`;
         const nextRev = (entry.revisionByKey.get(revKey) ?? 0) + 1;
         entry.revisionByKey.set(revKey, nextRev);
-        ws.emitToSession(entry.sessionId, {
+        const emitted = ws.emitToSession(entry.sessionId, {
           type: "translate.revise",
           sessionId: entry.sessionId,
           turnId: evt.turnId,
@@ -219,8 +264,19 @@ export function registerAzureStt(ws: WsServerApi) {
           revision: nextRev,
           fullText: translated,
         });
+        // #region agent log
+        debugLog({
+          location: "registerAzureStt.ts:emitTranslate",
+          message: "translate.revise emitted",
+          data: { to: key, emitted, translationLen: translated.length },
+          timestamp: Date.now(),
+          sessionId: "debug-session",
+          runId: "run1",
+          hypothesisId: "H4",
+        });
+        // #endregion
       } else {
-        ws.emitToSession(entry.sessionId, {
+        const emitted = ws.emitToSession(entry.sessionId, {
           type: "translate.final",
           sessionId: entry.sessionId,
           turnId: evt.turnId,
@@ -229,6 +285,17 @@ export function registerAzureStt(ws: WsServerApi) {
           to: key as Lang,
           text: translated,
         });
+        // #region agent log
+        debugLog({
+          location: "registerAzureStt.ts:emitTranslate",
+          message: "translate.final emitted",
+          data: { to: key, emitted, translationLen: translated.length },
+          timestamp: Date.now(),
+          sessionId: "debug-session",
+          runId: "run1",
+          hypothesisId: "H4",
+        });
+        // #endregion
       }
     }
 
@@ -242,11 +309,26 @@ export function registerAzureStt(ws: WsServerApi) {
       if (entry.history.length > 10) entry.history.splice(0, entry.history.length - 10);
       if (typeof result.summary === "string" && result.summary.trim()) {
         entry.summary = result.summary.trim();
-        ws.emitToSession(entry.sessionId, {
+        const emitted = ws.emitToSession(entry.sessionId, {
           type: "summary.update",
           sessionId: entry.sessionId,
           summary: entry.summary,
         });
+        // #region agent log
+        debugLog({
+          location: "registerAzureStt.ts:emitSummary",
+          message: "summary.update emitted",
+          data: {
+            emitted,
+            summaryLen: entry.summary.length,
+            summaryTrimLen: entry.summary.trim().length,
+          },
+          timestamp: Date.now(),
+          sessionId: "debug-session",
+          runId: "run1",
+          hypothesisId: "H2",
+        });
+        // #endregion
       }
     }
   }
