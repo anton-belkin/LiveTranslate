@@ -81,7 +81,8 @@ export class AzureSpeechSttAdapter {
   private pendingEndMs: number | null = null;
   private lastPartialText = "";
 
-  private currentFromLang: Lang | undefined = undefined;
+  private lastFinalLang: Lang | undefined = undefined;
+  private lastPartialLang: Lang | undefined = undefined;
   private pendingSpeakerId: string | undefined = undefined;
   private pendingSpeakerAtMs: number | undefined = undefined;
 
@@ -116,6 +117,24 @@ export class AzureSpeechSttAdapter {
     const autoDetectConfig = sdk.AutoDetectSourceLanguageConfig.fromLanguages(
       this.config.autoDetectLanguages,
     );
+    const sttEndpoint = this.getSttEndpointUrl();
+    // #region agent log
+    debugLog({
+      location: "azureSpeechSttAdapter.ts:start",
+      message: "starting azure recognizer",
+      data: {
+        autoDetectLanguages: this.config.autoDetectLanguages,
+        primaryLang: this.config.autoDetectLanguages[0] ?? null,
+        targetSampleRateHz: this.targetSampleRateHz,
+        endpoint: sttEndpoint.toString(),
+        languageIdMode: "Continuous",
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H1",
+    });
+    // #endregion
 
     this.sttStream = stream;
     this.recognizer = sdk.SpeechRecognizer.FromConfig(
@@ -222,14 +241,32 @@ export class AzureSpeechSttAdapter {
 
   private buildSpeechConfig() {
     const cfg = this.config;
-    const speechConfig = cfg.endpoint
-      ? sdk.SpeechConfig.fromEndpoint(new URL(cfg.endpoint), cfg.key)
-      : sdk.SpeechConfig.fromSubscription(cfg.key, cfg.region);
-
+    const speechConfig = sdk.SpeechConfig.fromEndpoint(
+      this.getSttEndpointUrl(),
+      cfg.key,
+    );
+    speechConfig.setProperty(
+      sdk.PropertyId.SpeechServiceConnection_LanguageIdMode,
+      "Continuous",
+    );
     const primaryLang = cfg.autoDetectLanguages[0];
-    if (primaryLang) speechConfig.speechRecognitionLanguage = primaryLang;
+    if (primaryLang && cfg.autoDetectLanguages.length <= 1) {
+      speechConfig.speechRecognitionLanguage = primaryLang;
+    }
+    // Optional tuning if finals are too sparse:
+    // speechConfig.setProperty(
+    //   sdk.PropertyId.Speech_SegmentationSilenceTimeoutMs,
+    //   "600",
+    // );
 
     return speechConfig;
+  }
+
+  private getSttEndpointUrl(): URL {
+    if (this.config.endpoint) return new URL(this.config.endpoint);
+    return new URL(
+      `wss://${this.config.region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1`,
+    );
   }
 
   private startDiarization(format: sdk.AudioStreamFormat) {
@@ -270,7 +307,9 @@ export class AzureSpeechSttAdapter {
       const text = String(result.text ?? "").trim();
       const offsetMs = toMs(result.offset);
       const turnId = this.ensureTurn(offsetMs);
-      const from = this.resolveFromLang(result);
+      const detected = this.resolveFromLang(result);
+      const from = detected ?? this.lastFinalLang;
+      this.lastPartialLang = from;
 
       if (text && text !== this.lastPartialText) {
         this.lastPartialText = text;
@@ -308,7 +347,30 @@ export class AzureSpeechSttAdapter {
       const endMs =
         this.pendingEndMs ?? (offsetMs != null ? offsetMs + durationMs : startMs);
       const turnId = this.ensureTurn(startMs);
-      const from = this.resolveFromLang(result);
+      const detected = this.resolveFromLang(result);
+      const from = detected ?? this.lastFinalLang;
+      if (detected) this.lastFinalLang = detected;
+
+      // #region agent log
+      debugLog({
+        location: "azureSpeechSttAdapter.ts:recognized",
+        message: "recognized speech result",
+        data: {
+          turnId,
+          textLength: text.length,
+          from: from ?? null,
+          detected: detected ?? null,
+          lastFinalLang: this.lastFinalLang ?? null,
+          lastPartialLang: this.lastPartialLang ?? null,
+          startMs,
+          endMs,
+        },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H2",
+      });
+      // #endregion
 
       this.emit({
         type: "stt.final",
@@ -397,14 +459,28 @@ export class AzureSpeechSttAdapter {
 
   private resolveFromLang(result: sdk.SpeechRecognitionResult): Lang | undefined {
     let detected: Lang | undefined;
+    let propertyLang: string | undefined;
     let autoLang: string | undefined;
     let resultLang: string | undefined;
+    try {
+      const autoProperty =
+        (sdk.PropertyId as Record<string, number | string>)
+          ?.SpeechServiceConnection_AutoDetectSourceLanguageResult;
+      if (autoProperty != null) {
+        propertyLang = result.properties.getProperty(
+          autoProperty as sdk.PropertyId,
+        );
+        detected = toLang(propertyLang);
+      }
+    } catch {
+      // ignore
+    }
     try {
       const auto = sdk.AutoDetectSourceLanguageResult.fromResult(
         result,
       );
       autoLang = auto?.language;
-      detected = toLang(autoLang);
+      if (!detected) detected = toLang(autoLang);
     } catch {
       // ignore
     }
@@ -414,16 +490,16 @@ export class AzureSpeechSttAdapter {
       detected = toLang(resultLang);
     }
 
-    if (detected && !this.currentFromLang) this.currentFromLang = detected;
     // #region agent log
     debugLog({
       location: "azureSpeechSttAdapter.ts:resolveFromLang",
       message: "resolved speech language",
       data: {
+        propertyLang: propertyLang ?? null,
         autoLang: autoLang ?? null,
         resultLang: resultLang ?? null,
         detected: detected ?? null,
-        currentFromLang: this.currentFromLang ?? null,
+        lastFinalLang: this.lastFinalLang ?? null,
       },
       timestamp: Date.now(),
       sessionId: "debug-session",
@@ -431,7 +507,7 @@ export class AzureSpeechSttAdapter {
       hypothesisId: "H3",
     });
     // #endregion
-    return this.currentFromLang ?? detected;
+    return detected;
   }
 
   private ensureTurn(offsetMs?: number): string {
@@ -497,7 +573,7 @@ export class AzureSpeechSttAdapter {
         sessionId: this.sessionId,
         turnId,
         segmentId: turnId,
-        lang: this.currentFromLang,
+        lang: this.lastPartialLang ?? this.lastFinalLang,
         text: this.lastPartialText,
         startMs,
         endMs,
@@ -507,7 +583,7 @@ export class AzureSpeechSttAdapter {
         turnId,
         segmentId: turnId,
         text: this.lastPartialText,
-        lang: this.currentFromLang,
+        lang: this.lastPartialLang ?? this.lastFinalLang,
         startMs,
         endMs,
       });
@@ -529,7 +605,18 @@ export class AzureSpeechSttAdapter {
     this.pendingEndMs = null;
     this.currentSpeakerId = undefined;
     this.lastPartialText = "";
-    this.currentFromLang = undefined;
+    this.lastPartialLang = undefined;
+    // #region agent log
+    debugLog({
+      location: "azureSpeechSttAdapter.ts:resetTurnState",
+      message: "reset turn state",
+      data: {},
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H2",
+    });
+    // #endregion
   }
 
   private handleStartError(err: unknown) {
