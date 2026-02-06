@@ -6,3 +6,5 @@ build
 .env.*
 !.env.example
 pnpm-debug.log
+*.log
+.cursor/debug.log
