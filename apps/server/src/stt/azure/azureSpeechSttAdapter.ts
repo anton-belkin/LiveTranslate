@@ -61,6 +61,18 @@ function getTranslationText(args: {
   return null;
 }
 
+function getTranslationKeys(result: sdk.TranslationRecognitionResult): string[] {
+  const translations = (result as unknown as { translations?: unknown }).translations;
+  if (!translations) return [];
+  if (typeof (translations as Map<string, string>).keys === "function") {
+    return Array.from((translations as Map<string, string>).keys());
+  }
+  if (typeof translations === "object" && translations !== null) {
+    return Object.keys(translations as Record<string, string>);
+  }
+  return [];
+}
+
 function getConfidence(result: sdk.TranslationRecognitionResult): number | undefined {
   const json = result.properties?.getProperty(
     sdk.PropertyId.SpeechServiceResponse_JsonResult,
@@ -163,6 +175,9 @@ export class AzureSpeechSttAdapter {
       1,
     );
     this.recognizers = this.buildRecognizers(format);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'azureSpeechSttAdapter.ts:start',message:'recognizers configured',data:{enableRu:this.enableRu,translationTargets:this.translationTargets,sourceLocales:this.recognizers.map((entry)=>({lang:entry.lang,locale:entry.locale}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
     if (this.recognizers.length === 0) {
       this.handleStartError(new Error("No speech recognizers configured."));
       return;
@@ -377,6 +392,11 @@ export class AzureSpeechSttAdapter {
       const shouldEmit =
         this.bestPartialScore == null || score >= this.bestPartialScore;
 
+      if (shouldEmit && text && this.lastPartialText.length === 0) {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'azureSpeechSttAdapter.ts:recognizing',message:'first partial for turn',data:{from,hasConfidence,confidence,textLen:text.length,bestPartialScore:this.bestPartialScore,translationKeys:getTranslationKeys(result)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+        // #endregion
+      }
 
       if (shouldEmit && text && text !== this.lastPartialText) {
         this.lastPartialText = text;
@@ -493,10 +513,20 @@ export class AzureSpeechSttAdapter {
     const best = candidates.reduce((acc, cur) => {
       if (cur.confidence > acc.confidence) return cur;
       if (cur.confidence < acc.confidence) return acc;
+      const preferLang = this.currentFromLang;
+      if (preferLang) {
+        const accPreferred = acc.lang === preferLang;
+        const curPreferred = cur.lang === preferLang;
+        if (curPreferred && !accPreferred) return cur;
+        if (accPreferred && !curPreferred) return acc;
+      }
       if (cur.textLen > acc.textLen) return cur;
       if (cur.textLen < acc.textLen) return acc;
       return (cur.durationMs ?? 0) >= (acc.durationMs ?? 0) ? cur : acc;
     });
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'azureSpeechSttAdapter.ts:flushFinalCandidates',message:'final candidates evaluated',data:{candidates:candidates.map((entry)=>({lang:entry.lang,confidence:entry.confidence,textLen:entry.textLen,durationMs:entry.durationMs})),selected:{lang:best.lang,confidence:best.confidence,textLen:best.textLen,durationMs:best.durationMs}},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
     const result = best.result;
     const text = String(result.text ?? "").trim();
     if (!text) return;
@@ -521,6 +551,9 @@ export class AzureSpeechSttAdapter {
       startMs,
       endMs,
     });
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'azureSpeechSttAdapter.ts:emitFinal',message:'stt.final emitted',data:{turnId:turnIdResolved,from,textLen:text.length,startMs,endMs},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+    // #endregion
 
     for (const target of this.translationTargets) {
       const translation = getTranslationText({
@@ -548,6 +581,9 @@ export class AzureSpeechSttAdapter {
           to: target,
           text: finalText,
         });
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'azureSpeechSttAdapter.ts:emitFinal',message:'translate.final emitted',data:{turnId:turnIdResolved,from,to:target,textLen:finalText.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+        // #endregion
       }
     }
 

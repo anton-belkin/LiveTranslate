@@ -226,6 +226,13 @@
   line-height: 1.35;
 }
 
+.bubbleMeta {
+  margin-top: 6px;
+  font-size: 10px;
+  color: rgba(229, 231, 235, 0.55);
+  letter-spacing: 0.2px;
+}
+
 .bubbleAlt {
   background: rgba(30, 41, 59, 0.5);
   color: rgba(191, 219, 254, 0.9);

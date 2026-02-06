@@ -213,6 +213,11 @@ export function transcriptReducer(
 
       if (msg.type === "stt.partial" || msg.type === "stt.final") {
         const lang: Lang | undefined = msg.lang;
+        if (msg.type === "stt.final") {
+          // #region agent log
+          fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'store.ts:stt.final',message:'stt.final received',data:{turnId:msg.turnId,segmentId:msg.segmentId,lang:msg.lang,textLen:msg.text.length,startMs:msg.startMs,endMs:msg.endMs},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H4'})}).catch(()=>{});
+          // #endregion
+        }
         const nextState = ensureTurn(state, msg.turnId, {
           sessionId: msg.sessionId,
           startMs: state.turnsById[msg.turnId]?.startMs ?? msg.startMs,
@@ -315,6 +320,9 @@ export function transcriptReducer(
       if (msg.type === "translate.final") {
         // Scope: stitched translation only.
         if (msg.segmentId !== msg.turnId) return state;
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'store.ts:translate.final',message:'translate.final received',data:{turnId:msg.turnId,from:msg.from,to:msg.to,textLen:msg.text.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+        // #endregion
 
         const nextState = ensureTurn(state, msg.turnId, {
           sessionId: msg.sessionId,

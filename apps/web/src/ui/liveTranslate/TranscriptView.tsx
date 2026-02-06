@@ -320,6 +320,11 @@ export function TranscriptView({
                       >
                         {row.originalText}
                         {row.originalPartial ? <span className="cursor">▍</span> : null}
+                        <div className="bubbleMeta mono">
+                          {row.group.lang ? row.group.lang.toUpperCase() : "?"} ·{" "}
+                          {row.group.turns[0]?.turnId ?? row.group.groupId}
+                          {row.originalPartial ? " P" : ""}
+                        </div>
                       </div>
                     ) : (
                       <span className="placeholder">—</span>

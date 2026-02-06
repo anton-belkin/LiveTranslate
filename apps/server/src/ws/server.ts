@@ -52,15 +52,31 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
   const sessionStopConsumers: SessionStopConsumer[] = [];
   const lastBackpressureErrorAtBySession = new Map<string, number>();
   const firstAudioFrameBySession = new Set<string>();
+  let connectionSeq = 0;
   const registry = createSessionRegistry({
     consumers: () => audioFrameConsumers,
   });
 
   function emitToSocket(socket: WebSocket, msg: ServerToClientMessage) {
     const parsed = safeParseServerMessage(msg);
-    if (!parsed.success) return false;
+    if (!parsed.success) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.ts:emitToSocket',message:'server message failed schema validation',data:{type:(msg as { type?: string }).type,to:(msg as { to?: string }).to,from:(msg as { from?: string }).from},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H6'})}).catch(()=>{});
+      // #endregion
+      return false;
+    }
     if (socket.readyState !== WebSocket.OPEN) return false;
     try {
+      if (msg.type === "stt.final") {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.ts:emitToSocket',message:'stt.final send',data:{turnId:msg.turnId,lang:msg.lang,textLen:msg.text.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H5'})}).catch(()=>{});
+        // #endregion
+      }
+      if (msg.type === "translate.final") {
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.ts:emitToSocket',message:'translate.final send',data:{turnId:msg.turnId,from:msg.from,to:msg.to,textLen:msg.text.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H5'})}).catch(()=>{});
+        // #endregion
+      }
       socket.send(JSON.stringify(parsed.data));
       return true;
     } catch {
@@ -72,7 +88,13 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
     const session = registry.getSession(sessionId);
     const socket = session?.socket;
     if (!socket) return false;
-    return emitToSocket(socket, msg);
+    const ok = emitToSocket(socket, msg);
+    if (!ok && msg.type === "translate.final") {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.ts:emitToSession',message:'translate.final dropped',data:{sessionId,to:msg.to,from:msg.from},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H7'})}).catch(()=>{});
+      // #endregion
+    }
+    return ok;
   }
 
   function sendError(socket: WebSocket, args: { sessionId?: string; code: string; message: string; recoverable?: boolean }) {
@@ -121,6 +143,8 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
   }
 
   wss.on("connection", (socket) => {
+    connectionSeq += 1;
+    const connectionId = connectionSeq;
     let helloReceived = false;
     let issuedSessionId: string | null = null;
     let boundSessionId: string | null = null;
@@ -137,6 +161,10 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
         sendError(socket, { code: "invalid_json", message: "Message must be valid JSON.", recoverable: true });
         return;
       }
+      const rawEnableRu =
+        typeof parsedJson.value === "object" && parsedJson.value !== null
+          ? (parsedJson.value as { enableRu?: unknown }).enableRu
+          : undefined;
 
       const parsedMsg = safeParseClientMessage(parsedJson.value);
       if (!parsedMsg.success) {
@@ -152,7 +180,16 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
           return;
         }
         helloReceived = true;
-        const session = handleHello(socket, msg);
+        // #region agent log
+        fetch('http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'server.ts:client.hello',message:'client.hello received',data:{connectionId,enableRu:msg.enableRu,rawEnableRu},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H1'})}).catch(()=>{});
+        // #endregion
+        const enableRu =
+          typeof msg.enableRu === "boolean"
+            ? msg.enableRu
+            : rawEnableRu === true
+              ? true
+              : undefined;
+        const session = handleHello(socket, { ...msg, enableRu });
         issuedSessionId = session.id;
         boundSessionId = session.id;
         return;
