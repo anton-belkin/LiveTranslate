@@ -5,6 +5,7 @@ import {
   safeParseServerMessage,
   type AudioFrame,
   type ClientHello,
+  type Lang,
 } from "@livetranslate/shared";
 
 import { startMicStreamer, type MicStreamerHandle } from "../../audio/micStreamer";
@@ -14,20 +15,29 @@ import type { TranscriptAction } from "./store";
 type UseLiveTranslateStreamArgs = {
   url: string;
   dispatch: Dispatch<TranscriptAction>;
+  targetLangs: Lang[];
+  staticContext?: string;
 };
 
-function makeHello(): ClientHello {
+function makeHello(args: { targetLangs: Lang[]; staticContext?: string }): ClientHello {
+  const targetLangs = args.targetLangs.length > 0 ? args.targetLangs : undefined;
   return {
     type: "client.hello",
     protocolVersion: PROTOCOL_VERSION,
-    langs: { lang1: "de", lang2: "en" },
+    ...(targetLangs ? { targetLangs } : {}),
+    staticContext: args.staticContext,
     client: {
       userAgent: navigator.userAgent,
     },
   };
 }
 
-export function useLiveTranslateStream({ url, dispatch }: UseLiveTranslateStreamArgs) {
+export function useLiveTranslateStream({
+  url,
+  dispatch,
+  targetLangs,
+  staticContext,
+}: UseLiveTranslateStreamArgs) {
   const socketRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicStreamerHandle | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -126,7 +136,7 @@ export function useLiveTranslateStream({ url, dispatch }: UseLiveTranslateStream
 
     socket.onopen = () => {
       dispatch({ type: "connection.update", status: "open" });
-      socket.send(JSON.stringify(makeHello()));
+      socket.send(JSON.stringify(makeHello({ targetLangs, staticContext })));
     };
 
     socket.onmessage = (ev) => {
@@ -178,7 +188,7 @@ export function useLiveTranslateStream({ url, dispatch }: UseLiveTranslateStream
       dispatch({ type: "connection.update", status: "closed" });
       void stopMic();
     };
-  }, [dispatch, startMic, stopMic, url]);
+  }, [dispatch, startMic, stopMic, url, targetLangs, staticContext]);
 
   return { start, stop };
 }

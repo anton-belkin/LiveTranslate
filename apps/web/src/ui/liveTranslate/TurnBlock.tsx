@@ -62,7 +62,8 @@ export const TurnBlock = memo(function TurnBlock({ turn }: { turn: Turn }) {
   const showInDe = placement === "de";
   const showInEn = placement === "en";
 
-  const translation = turn.translation;
+  const firstTranslationKey = Object.keys(turn.translationsByLang)[0] as Lang | undefined;
+  const translation = firstTranslationKey ? turn.translationsByLang[firstTranslationKey] : undefined;
   const translationNode = useMemo(() => {
     if (!translation?.text?.trim()) return null;
     const isPartial = !translation.isFinal;

@@ -1,5 +1,6 @@
 import type { Lang, ServerToClientMessage } from "@livetranslate/shared";
 import { PROTOCOL_VERSION } from "@livetranslate/shared";
+import { parseUrlConfig } from "./urlConfig";
 
 export type ConnectionStatus =
   | "idle"
@@ -43,7 +44,7 @@ export type Turn = {
   isFinal: boolean;
   segmentsById: Record<string, Segment>;
   segmentOrder: string[];
-  translation?: TurnTranslation;
+  translationsByLang: Record<string, TurnTranslation>;
 };
 
 export type TranscriptState = {
@@ -53,6 +54,8 @@ export type TranscriptState = {
   sessionId?: string;
   lastSocketError?: string;
   lastServerError?: string;
+  summary?: string;
+  targetLangs: Lang[];
   turnsById: Record<string, Turn>;
   turnOrder: string[];
 };
@@ -71,10 +74,13 @@ function getDefaultWsUrl() {
 }
 
 export function makeInitialState(): TranscriptState {
+  const urlConfig = typeof window !== "undefined" ? parseUrlConfig() : undefined;
   return {
     protocolVersion: PROTOCOL_VERSION,
     url: getDefaultWsUrl(),
     status: "idle",
+    summary: undefined,
+    targetLangs: urlConfig?.targetLangs ?? [],
     turnsById: {},
     turnOrder: [],
   };
@@ -100,6 +106,7 @@ function ensureTurn(
     isFinal: false,
     segmentsById: {},
     segmentOrder: [],
+    translationsByLang: {},
     ...patch,
   };
 
@@ -182,7 +189,12 @@ export function transcriptReducer(
       const msg = action.message;
 
       if (msg.type === "server.ready") {
-        return { ...state, sessionId: msg.sessionId, lastServerError: undefined };
+        return {
+          ...state,
+          sessionId: msg.sessionId,
+          lastServerError: undefined,
+          targetLangs: msg.targetLangs ?? state.targetLangs,
+        };
       }
 
       if (msg.type === "server.error") {
@@ -268,24 +280,15 @@ export function transcriptReducer(
           sessionId: msg.sessionId,
         });
         const turn = nextState.turnsById[msg.turnId];
-        const prev = turn.translation;
+        const prev = turn.translationsByLang[msg.to];
 
         // Ignore exact duplicate deltas.
-        if (
-          prev &&
-          prev.segmentId === msg.segmentId &&
-          prev.from === msg.from &&
-          prev.to === msg.to &&
-          prev.lastDelta === msg.textDelta
-        ) {
+        if (prev && prev.segmentId === msg.segmentId && prev.from === msg.from && prev.lastDelta === msg.textDelta) {
           return nextState;
         }
 
         const nextText =
-          prev &&
-          prev.segmentId === msg.segmentId &&
-          prev.from === msg.from &&
-          prev.to === msg.to
+          prev && prev.segmentId === msg.segmentId && prev.from === msg.from
             ? prev.text + msg.textDelta
             : msg.textDelta;
 
@@ -293,13 +296,16 @@ export function transcriptReducer(
 
         const updatedTurn: Turn = {
           ...turn,
-          translation: {
-            segmentId: msg.segmentId,
-            from: msg.from,
-            to: msg.to,
-            text: nextText,
-            isFinal: false,
-            lastDelta: msg.textDelta,
+          translationsByLang: {
+            ...turn.translationsByLang,
+            [msg.to]: {
+              segmentId: msg.segmentId,
+              from: msg.from,
+              to: msg.to,
+              text: nextText,
+              isFinal: false,
+              lastDelta: msg.textDelta,
+            },
           },
         };
 
@@ -317,27 +323,23 @@ export function transcriptReducer(
           sessionId: msg.sessionId,
         });
         const turn = nextState.turnsById[msg.turnId];
-        const prev = turn.translation;
+        const prev = turn.translationsByLang[msg.to];
 
-        if (
-          prev &&
-          prev.segmentId === msg.segmentId &&
-          prev.from === msg.from &&
-          prev.to === msg.to &&
-          prev.text === msg.text &&
-          prev.isFinal
-        ) {
+        if (prev && prev.segmentId === msg.segmentId && prev.from === msg.from && prev.text === msg.text && prev.isFinal) {
           return nextState;
         }
 
         const updatedTurn: Turn = {
           ...turn,
-          translation: {
-            segmentId: msg.segmentId,
-            from: msg.from,
-            to: msg.to,
-            text: msg.text,
-            isFinal: true,
+          translationsByLang: {
+            ...turn.translationsByLang,
+            [msg.to]: {
+              segmentId: msg.segmentId,
+              from: msg.from,
+              to: msg.to,
+              text: msg.text,
+              isFinal: true,
+            },
           },
         };
 
@@ -355,27 +357,23 @@ export function transcriptReducer(
           sessionId: msg.sessionId,
         });
         const turn = nextState.turnsById[msg.turnId];
-        const prev = turn.translation;
+        const prev = turn.translationsByLang[msg.to];
 
-        if (
-          prev &&
-          prev.segmentId === msg.segmentId &&
-          prev.from === msg.from &&
-          prev.to === msg.to &&
-          prev.text === msg.fullText &&
-          prev.isFinal === false
-        ) {
+        if (prev && prev.segmentId === msg.segmentId && prev.from === msg.from && prev.text === msg.fullText && prev.isFinal === false) {
           return nextState;
         }
 
         const updatedTurn: Turn = {
           ...turn,
-          translation: {
-            segmentId: msg.segmentId,
-            from: msg.from,
-            to: msg.to,
-            text: msg.fullText,
-            isFinal: false,
+          translationsByLang: {
+            ...turn.translationsByLang,
+            [msg.to]: {
+              segmentId: msg.segmentId,
+              from: msg.from,
+              to: msg.to,
+              text: msg.fullText,
+              isFinal: false,
+            },
           },
         };
 
@@ -383,6 +381,11 @@ export function transcriptReducer(
           ...nextState,
           turnsById: { ...nextState.turnsById, [msg.turnId]: updatedTurn },
         };
+      }
+
+      if (msg.type === "summary.update") {
+        if (msg.summary === state.summary) return state;
+        return { ...state, summary: msg.summary };
       }
 
       return state;

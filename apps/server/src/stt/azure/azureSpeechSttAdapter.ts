@@ -5,6 +5,24 @@ import { resamplePcm16MonoLinear } from "../resamplePcm16.js";
 import type { AzureSpeechConfig } from "./config.js";
 
 type Emit = (msg: ServerToClientMessage) => void;
+type SttEvent =
+  | {
+      kind: "partial";
+      turnId: string;
+      segmentId: string;
+      text: string;
+      lang?: Lang;
+      startMs: number;
+    }
+  | {
+      kind: "final";
+      turnId: string;
+      segmentId: string;
+      text: string;
+      lang?: Lang;
+      startMs: number;
+      endMs: number;
+    };
 
 type AdapterState = "idle" | "starting" | "open" | "stopping" | "stopped";
 
@@ -24,10 +42,6 @@ function toLang(locale?: string): Lang | undefined {
   return undefined;
 }
 
-function otherLang(lang: Lang): Lang {
-  return lang === "de" ? "en" : "de";
-}
-
 function clampSampleRate(value?: number) {
   if (!value || !Number.isFinite(value)) return DEFAULT_TARGET_SAMPLE_RATE_HZ;
   const v = Math.round(value);
@@ -36,45 +50,19 @@ function clampSampleRate(value?: number) {
   return v;
 }
 
-function getTranslationText(args: {
-  result: sdk.TranslationRecognitionResult;
-  target: Lang;
-}): string | null {
-  const translations = (args.result as unknown as { translations?: unknown })
-    .translations;
-  if (!translations) return null;
-
-  if (typeof (translations as Map<string, string>).get === "function") {
-    const map = translations as Map<string, string>;
-    const direct = map.get(args.target);
-    if (typeof direct === "string") return direct;
-    for (const [key, value] of map.entries()) {
-      if (toLang(key) === args.target && typeof value === "string") return value;
-    }
-    return null;
-  }
-
-  if (typeof translations === "object" && translations !== null) {
-    for (const [key, value] of Object.entries(translations as Record<string, string>)) {
-      if (toLang(key) === args.target && typeof value === "string") return value;
-    }
-  }
-
-  return null;
-}
-
 export class AzureSpeechSttAdapter {
   private state: AdapterState = "idle";
   private readonly sessionId: string;
   private readonly emit: Emit;
   private readonly onError: (err: Error) => void;
+  private readonly onSttEvent?: (evt: SttEvent) => void;
   private readonly config: AzureSpeechConfig;
   private readonly targetSampleRateHz: number;
   private readonly enableDiarization: boolean;
 
-  private recognizer: sdk.TranslationRecognizer | null = null;
+  private recognizer: sdk.SpeechRecognizer | null = null;
   private diarizationRecognizer: sdk.ConversationTranscriber | null = null;
-  private translationStream: sdk.PushAudioInputStream | null = null;
+  private sttStream: sdk.PushAudioInputStream | null = null;
   private diarizationStream: sdk.PushAudioInputStream | null = null;
 
   private currentTurnId: string | null = null;
@@ -84,10 +72,6 @@ export class AzureSpeechSttAdapter {
   private lastPartialText = "";
 
   private currentFromLang: Lang | undefined = undefined;
-  private currentToLang: Lang | undefined = undefined;
-  private lastTranslationText = "";
-  private translationRevision = 0;
-
   private pendingSpeakerId: string | undefined = undefined;
   private pendingSpeakerAtMs: number | undefined = undefined;
 
@@ -95,11 +79,13 @@ export class AzureSpeechSttAdapter {
     sessionId: string;
     emit: Emit;
     onError: (err: Error) => void;
+    onSttEvent?: (evt: SttEvent) => void;
     config: AzureSpeechConfig;
   }) {
     this.sessionId = args.sessionId;
     this.emit = args.emit;
     this.onError = args.onError;
+    this.onSttEvent = args.onSttEvent;
     this.config = args.config;
     this.targetSampleRateHz = clampSampleRate(args.config.sampleRateHz);
     this.enableDiarization = Boolean(args.config.enableDiarization);
@@ -109,7 +95,7 @@ export class AzureSpeechSttAdapter {
     if (this.state !== "idle") return;
     this.state = "starting";
 
-    const speechConfig = this.buildTranslationConfig();
+    const speechConfig = this.buildSpeechConfig();
     const format = sdk.AudioStreamFormat.getWaveFormatPCM(
       this.targetSampleRateHz,
       16,
@@ -121,13 +107,13 @@ export class AzureSpeechSttAdapter {
       this.config.autoDetectLanguages,
     );
 
-    this.translationStream = stream;
-    this.recognizer = sdk.TranslationRecognizer.FromConfig(
+    this.sttStream = stream;
+    this.recognizer = sdk.SpeechRecognizer.FromConfig(
       speechConfig,
       autoDetectConfig,
       audioConfig,
     );
-    this.bindTranslationHandlers(this.recognizer);
+    this.bindSttHandlers(this.recognizer);
     this.recognizer.startContinuousRecognitionAsync(
       () => {
         if (this.state !== "stopping" && this.state !== "stopped") {
@@ -142,7 +128,7 @@ export class AzureSpeechSttAdapter {
 
   pushAudioFrame(args: { pcm16: Uint8Array; sampleRateHz: number }) {
     if (this.state === "stopping" || this.state === "stopped") return;
-    const stream = this.translationStream;
+    const stream = this.sttStream;
     if (!stream) return;
 
     const samples = new Int16Array(
@@ -164,9 +150,10 @@ export class AzureSpeechSttAdapter {
       resampled.byteLength,
     );
 
+    const buffer = bytes.slice().buffer;
     try {
-      stream.write(bytes);
-      if (this.diarizationStream) this.diarizationStream.write(bytes);
+      stream.write(buffer);
+      if (this.diarizationStream) this.diarizationStream.write(buffer);
     } catch (err) {
       this.onError(err instanceof Error ? err : new Error(String(err)));
     }
@@ -180,8 +167,8 @@ export class AzureSpeechSttAdapter {
 
     const recognizer = this.recognizer;
     this.recognizer = null;
-    this.translationStream?.close();
-    this.translationStream = null;
+    this.sttStream?.close();
+    this.sttStream = null;
 
     const diarization = this.diarizationRecognizer;
     this.diarizationRecognizer = null;
@@ -196,12 +183,18 @@ export class AzureSpeechSttAdapter {
     await Promise.all([
       recognizer
         ? new Promise<void>((resolve) => {
-            recognizer.stopContinuousRecognitionAsync(resolve, resolve);
+            recognizer.stopContinuousRecognitionAsync(
+              () => resolve(),
+              () => resolve(),
+            );
           })
         : Promise.resolve(),
       diarization
         ? new Promise<void>((resolve) => {
-            diarization.stopTranscribingAsync(resolve, resolve);
+            diarization.stopTranscribingAsync(
+              () => resolve(),
+              () => resolve(),
+            );
           })
         : Promise.resolve(),
     ]);
@@ -217,18 +210,14 @@ export class AzureSpeechSttAdapter {
     }
   }
 
-  private buildTranslationConfig() {
+  private buildSpeechConfig() {
     const cfg = this.config;
     const speechConfig = cfg.endpoint
-      ? sdk.SpeechTranslationConfig.fromEndpoint(new URL(cfg.endpoint), cfg.key)
-      : sdk.SpeechTranslationConfig.fromSubscription(cfg.key, cfg.region);
+      ? sdk.SpeechConfig.fromEndpoint(new URL(cfg.endpoint), cfg.key)
+      : sdk.SpeechConfig.fromSubscription(cfg.key, cfg.region);
 
     const primaryLang = cfg.autoDetectLanguages[0];
     if (primaryLang) speechConfig.speechRecognitionLanguage = primaryLang;
-
-    for (const target of cfg.translationTargets) {
-      speechConfig.addTargetLanguage(target);
-    }
 
     return speechConfig;
   }
@@ -260,11 +249,11 @@ export class AzureSpeechSttAdapter {
     this.bindDiarizationHandlers(transcriber);
     transcriber.startTranscribingAsync(
       () => undefined,
-      (err) => this.onError(err instanceof Error ? err : new Error(String(err))),
+      (err) => this.onError(new Error(String(err))),
     );
   }
 
-  private bindTranslationHandlers(recognizer: sdk.TranslationRecognizer) {
+  private bindSttHandlers(recognizer: sdk.SpeechRecognizer) {
     recognizer.recognizing = (_sender, evt) => {
       const result = evt?.result;
       if (!result) return;
@@ -272,8 +261,6 @@ export class AzureSpeechSttAdapter {
       const offsetMs = toMs(result.offset);
       const turnId = this.ensureTurn(offsetMs);
       const from = this.resolveFromLang(result);
-      const to = from ? otherLang(from) : undefined;
-      if (from && !this.currentToLang) this.currentToLang = to;
 
       if (text && text !== this.lastPartialText) {
         this.lastPartialText = text;
@@ -286,21 +273,14 @@ export class AzureSpeechSttAdapter {
           text,
           startMs: this.currentTurnStartMs ?? offsetMs ?? 0,
         });
-      }
-
-      if (from && to) {
-        const translation = getTranslationText({
-          result,
-          target: to,
+        this.onSttEvent?.({
+          kind: "partial",
+          turnId,
+          segmentId: turnId,
+          text,
+          lang: from,
+          startMs: this.currentTurnStartMs ?? offsetMs ?? 0,
         });
-        if (translation) {
-          this.emitTranslatePartial({
-            turnId,
-            from,
-            to,
-            text: translation,
-          });
-        }
       }
     };
 
@@ -308,12 +288,7 @@ export class AzureSpeechSttAdapter {
       const result = evt?.result;
       if (!result) return;
       const reason = result.reason;
-      if (
-        reason !== sdk.ResultReason.TranslatedSpeech &&
-        reason !== sdk.ResultReason.RecognizedSpeech
-      ) {
-        return;
-      }
+      if (reason !== sdk.ResultReason.RecognizedSpeech) return;
 
       const text = String(result.text ?? "").trim();
       if (!text) return;
@@ -324,8 +299,6 @@ export class AzureSpeechSttAdapter {
         this.pendingEndMs ?? (offsetMs != null ? offsetMs + durationMs : startMs);
       const turnId = this.ensureTurn(startMs);
       const from = this.resolveFromLang(result);
-      const to = from ? otherLang(from) : undefined;
-      if (from && !this.currentToLang) this.currentToLang = to;
 
       this.emit({
         type: "stt.final",
@@ -337,38 +310,15 @@ export class AzureSpeechSttAdapter {
         startMs,
         endMs,
       });
-
-      if (from && to) {
-        const translation = getTranslationText({
-          result,
-          target: to,
-        });
-        const finalText = translation ?? this.lastTranslationText;
-        if (finalText) {
-          if (
-            translation &&
-            this.lastTranslationText &&
-            !translation.startsWith(this.lastTranslationText)
-          ) {
-            this.emitTranslateRevise({
-              turnId,
-              from,
-              to,
-              text: translation,
-            });
-          }
-          this.lastTranslationText = finalText;
-          this.emit({
-            type: "translate.final",
-            sessionId: this.sessionId,
-            turnId,
-            segmentId: turnId,
-            from,
-            to,
-            text: finalText,
-          });
-        }
-      }
+      this.onSttEvent?.({
+        kind: "final",
+        turnId,
+        segmentId: turnId,
+        text,
+        lang: from,
+        startMs,
+        endMs,
+      });
 
       this.emit({
         type: "turn.final",
@@ -435,13 +385,11 @@ export class AzureSpeechSttAdapter {
     };
   }
 
-  private resolveFromLang(
-    result: sdk.TranslationRecognitionResult,
-  ): Lang | undefined {
+  private resolveFromLang(result: sdk.SpeechRecognitionResult): Lang | undefined {
     let detected: Lang | undefined;
     try {
       const auto = sdk.AutoDetectSourceLanguageResult.fromResult(
-        result as unknown as sdk.SpeechRecognitionResult,
+        result,
       );
       detected = toLang(auto?.language);
     } catch {
@@ -454,75 +402,6 @@ export class AzureSpeechSttAdapter {
 
     if (detected && !this.currentFromLang) this.currentFromLang = detected;
     return this.currentFromLang ?? detected;
-  }
-
-  private emitTranslatePartial(args: {
-    turnId: string;
-    from: Lang;
-    to: Lang;
-    text: string;
-  }) {
-    const nextText = args.text;
-    if (!nextText || nextText.trim().length === 0) return;
-
-    const prev = this.lastTranslationText;
-    if (!prev) {
-      this.lastTranslationText = nextText;
-      this.emit({
-        type: "translate.partial",
-        sessionId: this.sessionId,
-        turnId: args.turnId,
-        segmentId: args.turnId,
-        from: args.from,
-        to: args.to,
-        textDelta: nextText,
-      });
-      return;
-    }
-
-    if (nextText.startsWith(prev)) {
-      const delta = nextText.slice(prev.length);
-      if (delta.length > 0) {
-        this.emit({
-          type: "translate.partial",
-          sessionId: this.sessionId,
-          turnId: args.turnId,
-          segmentId: args.turnId,
-          from: args.from,
-          to: args.to,
-          textDelta: delta,
-        });
-      }
-      this.lastTranslationText = nextText;
-      return;
-    }
-
-    this.emitTranslateRevise({
-      turnId: args.turnId,
-      from: args.from,
-      to: args.to,
-      text: nextText,
-    });
-    this.lastTranslationText = nextText;
-  }
-
-  private emitTranslateRevise(args: {
-    turnId: string;
-    from: Lang;
-    to: Lang;
-    text: string;
-  }) {
-    this.translationRevision += 1;
-    this.emit({
-      type: "translate.revise",
-      sessionId: this.sessionId,
-      turnId: args.turnId,
-      segmentId: args.turnId,
-      from: args.from,
-      to: args.to,
-      revision: this.translationRevision,
-      fullText: args.text,
-    });
   }
 
   private ensureTurn(offsetMs?: number): string {
@@ -593,16 +472,14 @@ export class AzureSpeechSttAdapter {
         startMs,
         endMs,
       });
-    }
-    if (this.lastTranslationText && this.currentFromLang && this.currentToLang) {
-      this.emit({
-        type: "translate.final",
-        sessionId: this.sessionId,
+      this.onSttEvent?.({
+        kind: "final",
         turnId,
         segmentId: turnId,
-        from: this.currentFromLang,
-        to: this.currentToLang,
-        text: this.lastTranslationText,
+        text: this.lastPartialText,
+        lang: this.currentFromLang,
+        startMs,
+        endMs,
       });
     }
     this.emit({
@@ -623,9 +500,6 @@ export class AzureSpeechSttAdapter {
     this.currentSpeakerId = undefined;
     this.lastPartialText = "";
     this.currentFromLang = undefined;
-    this.currentToLang = undefined;
-    this.lastTranslationText = "";
-    this.translationRevision = 0;
   }
 
   private handleStartError(err: unknown) {

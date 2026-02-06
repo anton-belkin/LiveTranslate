@@ -105,6 +105,7 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
       type: "server.ready",
       protocolVersion: PROTOCOL_VERSION,
       sessionId: session.id,
+      targetLangs: msg.targetLangs,
     });
     return session;
   }
@@ -116,6 +117,7 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
       type: "server.ready",
       protocolVersion: PROTOCOL_VERSION,
       sessionId: existing.id,
+      targetLangs: existing.hello.targetLangs,
     });
     return existing;
   }

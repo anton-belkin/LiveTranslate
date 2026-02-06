@@ -1,14 +1,29 @@
+import type { Lang } from "@livetranslate/shared";
 import type { WsServerApi } from "../ws/server.js";
 import { base64ToUint8Array } from "../util/base64.js";
 import { AzureSpeechSttAdapter } from "./azure/azureSpeechSttAdapter.js";
 import { loadAzureSpeechConfig } from "./azure/config.js";
+import { loadGroqConfig } from "../translate/groq/config.js";
+import {
+  groqTranslate,
+  type TranslationHistoryEntry,
+} from "../translate/groq/groqTranslate.js";
 
 const DEFAULT_IDLE_STOP_MS = 30_000;
 
 type Entry = {
+  sessionId: string;
   adapter: AzureSpeechSttAdapter;
   idleTimer: NodeJS.Timeout | null;
   lastFrameAt: number;
+  targetLangs: Lang[];
+  staticContext?: string;
+  summary: string;
+  history: TranslationHistoryEntry[];
+  revisionByKey: Map<string, number>;
+  latestSeqByTurn: Map<string, number>;
+  translateSeq: number;
+  finalizedTurns: Set<string>;
 };
 
 /**
@@ -22,11 +37,29 @@ type Entry = {
 export function registerAzureStt(ws: WsServerApi) {
   const entries = new Map<string, Entry>();
   const config = loadAzureSpeechConfig();
+  const groqConfig = loadGroqConfig();
 
-  function ensureEntry(sessionId: string) {
+  function normalizeLangList(list: string[]): Lang[] {
+    const out: Lang[] = [];
+    for (const item of list) {
+      const next = item.trim().toLowerCase();
+      if (!next) continue;
+      if (!out.includes(next as Lang)) out.push(next as Lang);
+    }
+    return out.length > 0 ? out : (groqConfig.targetLangs as Lang[]);
+  }
+
+  function resolveTargetLangs(args: { targetLangs?: Lang[]; langs?: { lang1: Lang; lang2: Lang } }) {
+    if (args.targetLangs && args.targetLangs.length > 0) return normalizeLangList(args.targetLangs);
+    if (args.langs) return normalizeLangList([args.langs.lang1, args.langs.lang2]);
+    return normalizeLangList(groqConfig.targetLangs);
+  }
+
+  function ensureEntry(sessionId: string, hello: { targetLangs?: Lang[]; langs?: { lang1: Lang; lang2: Lang }; staticContext?: string }) {
     const existing = entries.get(sessionId);
     if (existing) return existing;
 
+    let entry: Entry;
     const adapter = new AzureSpeechSttAdapter({
       sessionId,
       config,
@@ -42,14 +75,26 @@ export function registerAzureStt(ws: WsServerApi) {
           recoverable: true,
         });
       },
+      onSttEvent: (evt) => {
+        void handleSttEvent(entry, evt);
+      },
     });
 
     adapter.start();
 
-    const entry: Entry = {
+    entry = {
+      sessionId,
       adapter,
       idleTimer: null,
       lastFrameAt: Date.now(),
+      targetLangs: resolveTargetLangs(hello),
+      staticContext: hello.staticContext ?? groqConfig.staticContext,
+      summary: "",
+      history: [],
+      revisionByKey: new Map(),
+      latestSeqByTurn: new Map(),
+      translateSeq: 0,
+      finalizedTurns: new Set(),
     };
     entries.set(sessionId, entry);
     return entry;
@@ -71,7 +116,7 @@ export function registerAzureStt(ws: WsServerApi) {
   }
 
   const unsubscribe = ws.registerAudioFrameConsumer(({ session, frame }) => {
-    const entry = ensureEntry(session.id);
+    const entry = ensureEntry(session.id, session.hello);
     entry.lastFrameAt = Date.now();
     scheduleIdleStop(session.id, entry);
 
@@ -96,5 +141,114 @@ export function registerAzureStt(ws: WsServerApi) {
       entries.delete(sessionId);
     }
   };
+
+  async function handleSttEvent(
+    entry: Entry,
+    evt:
+      | {
+          kind: "partial";
+          turnId: string;
+          segmentId: string;
+          text: string;
+          lang?: Lang;
+          startMs: number;
+        }
+      | {
+          kind: "final";
+          turnId: string;
+          segmentId: string;
+          text: string;
+          lang?: Lang;
+          startMs: number;
+          endMs: number;
+        },
+  ) {
+    const text = evt.text.trim();
+    if (!text) return;
+    if (evt.kind === "partial" && entry.finalizedTurns.has(evt.turnId)) return;
+
+    const seq = ++entry.translateSeq;
+    entry.latestSeqByTurn.set(evt.turnId, seq);
+
+    let result: { translations: Record<string, string>; summary?: string };
+    try {
+      result = await groqTranslate(groqConfig, {
+        utteranceText: text,
+        isFinal: evt.kind === "final",
+        utteranceLang: evt.lang,
+        targetLangs: entry.targetLangs,
+        history: entry.history.slice(-10),
+        summary: entry.summary,
+        staticContext: entry.staticContext,
+      });
+    } catch (err) {
+      ws.emitToSession(entry.sessionId, {
+        type: "server.error",
+        sessionId: entry.sessionId,
+        code: "translate_error",
+        message: err instanceof Error ? err.message : String(err),
+        recoverable: true,
+      });
+      return;
+    }
+
+    if (evt.kind === "partial" && entry.latestSeqByTurn.get(evt.turnId) !== seq) return;
+
+    const fromLang = (evt.lang ?? "und") as Lang;
+    const translations: Record<string, string> = {};
+    for (const lang of entry.targetLangs) {
+      const key = lang.toLowerCase();
+      const translated =
+        result.translations[key] ??
+        result.translations[key.toUpperCase()] ??
+        (key === fromLang ? text : "");
+      if (!translated) continue;
+      translations[key] = translated;
+
+      if (evt.kind === "partial") {
+        const revKey = `${evt.turnId}:${key}`;
+        const nextRev = (entry.revisionByKey.get(revKey) ?? 0) + 1;
+        entry.revisionByKey.set(revKey, nextRev);
+        ws.emitToSession(entry.sessionId, {
+          type: "translate.revise",
+          sessionId: entry.sessionId,
+          turnId: evt.turnId,
+          segmentId: evt.segmentId,
+          from: fromLang,
+          to: key as Lang,
+          revision: nextRev,
+          fullText: translated,
+        });
+      } else {
+        ws.emitToSession(entry.sessionId, {
+          type: "translate.final",
+          sessionId: entry.sessionId,
+          turnId: evt.turnId,
+          segmentId: evt.segmentId,
+          from: fromLang,
+          to: key as Lang,
+          text: translated,
+        });
+      }
+    }
+
+    if (evt.kind === "final") {
+      entry.finalizedTurns.add(evt.turnId);
+      entry.history.push({
+        text,
+        lang: evt.lang,
+        translations,
+      });
+      if (entry.history.length > 10) entry.history.splice(0, entry.history.length - 10);
+      if (typeof result.summary === "string" && result.summary.trim()) {
+        entry.summary = result.summary.trim();
+        ws.emitToSession(entry.sessionId, {
+          type: "summary.update",
+          sessionId: entry.sessionId,
+          summary: entry.summary,
+        });
+      }
+    }
+  }
 }
 

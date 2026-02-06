@@ -11,7 +11,7 @@ export const PROTOCOL_VERSION = 1 as const;
 // Shared primitives
 // ----------------------------
 
-export const LangSchema = z.enum(["de", "en"]);
+export const LangSchema = z.string().min(2);
 export type Lang = z.infer<typeof LangSchema>;
 
 export const IdSchema = z.string().min(1);
@@ -31,8 +31,16 @@ export const ClientHelloSchema = z.object({
   type: z.literal("client.hello"),
   protocolVersion: z.literal(PROTOCOL_VERSION),
   /**
-   * Optional: allow UI to configure which columns are treated as LANG1/LANG2.
-   * For this PoC, default is de/en.
+   * Optional: allow UI to configure target translation languages.
+   * Defaults are server-side if omitted.
+   */
+  targetLangs: z.array(LangSchema).min(1).optional(),
+  /**
+   * Optional: static discussion context override (server-side only).
+   */
+  staticContext: z.string().optional(),
+  /**
+   * Deprecated: legacy two-column config.
    */
   langs: z
     .object({
@@ -93,6 +101,10 @@ export const ServerReadySchema = z.object({
   type: z.literal("server.ready"),
   protocolVersion: z.literal(PROTOCOL_VERSION),
   sessionId: IdSchema,
+  /**
+   * Effective target languages for this session (if known).
+   */
+  targetLangs: z.array(LangSchema).min(1).optional(),
 });
 export type ServerReady = z.infer<typeof ServerReadySchema>;
 
@@ -182,6 +194,13 @@ export const TranslateReviseSchema = z.object({
 });
 export type TranslateRevise = z.infer<typeof TranslateReviseSchema>;
 
+export const SummaryUpdateSchema = z.object({
+  type: z.literal("summary.update"),
+  sessionId: IdSchema,
+  summary: z.string(),
+});
+export type SummaryUpdate = z.infer<typeof SummaryUpdateSchema>;
+
 export const ServerErrorSchema = z.object({
   type: z.literal("server.error"),
   sessionId: IdSchema.optional(),
@@ -200,6 +219,7 @@ export const ServerToClientSchema = z.discriminatedUnion("type", [
   TranslatePartialSchema,
   TranslateFinalSchema,
   TranslateReviseSchema,
+  SummaryUpdateSchema,
   ServerErrorSchema,
 ]);
 export type ServerToClientMessage = z.infer<typeof ServerToClientSchema>;
