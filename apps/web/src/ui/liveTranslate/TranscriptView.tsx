@@ -6,6 +6,7 @@ import type { TranscriptState, Turn } from "./store";
 
 const PAUSE_GAP_MS = 900;
 const DEBUG_LOGS = import.meta.env.VITE_DEBUG_LOGS === "true";
+const LEAN_MAX_ROWS = 200;
 
 function debugLog(payload: Record<string, unknown>) {
   if (!DEBUG_LOGS) return;
@@ -96,10 +97,12 @@ export function TranscriptView({
   state,
   showOriginal,
   showSummary,
+  lean,
 }: {
   state: TranscriptState;
   showOriginal: boolean;
   showSummary: boolean;
+  lean: boolean;
 }) {
   const turns = useMemo(
     () =>
@@ -222,6 +225,12 @@ export function TranscriptView({
     });
   }, [groups, targetLangs]);
 
+  const visibleRows = useMemo(() => {
+    if (!lean) return rows;
+    if (rows.length <= LEAN_MAX_ROWS) return rows;
+    return rows.slice(rows.length - LEAN_MAX_ROWS);
+  }, [lean, rows]);
+
   // #region agent log
   useEffect(() => {
     const latest = rows[rows.length - 1];
@@ -282,29 +291,31 @@ export function TranscriptView({
   return (
     <div className="card main">
       <div className="bubbles">
-        {showSummary ? (
+        {showSummary && !lean ? (
           <div className="summaryPanel">
             <div className="summaryHeader">Summary (EN)</div>
             <div className="summaryBody">{state.summary ?? "—"}</div>
           </div>
         ) : null}
 
-        <div className="bubblesHeader" style={gridStyle}>
-          {showOriginal ? (
-            <div className="bubblesColLabel">
-              <strong>Original</strong>
-              <span>Text</span>
-            </div>
-          ) : null}
-          {targetLangs.map((lang) => (
-            <div key={lang} className="bubblesColLabel">
-              <strong>{formatLangLabel(lang)}</strong>
-              <span>Text</span>
-            </div>
-          ))}
-        </div>
+        {lean ? null : (
+          <div className="bubblesHeader" style={gridStyle}>
+            {showOriginal ? (
+              <div className="bubblesColLabel">
+                <strong>Original</strong>
+                <span>Text</span>
+              </div>
+            ) : null}
+            {targetLangs.map((lang) => (
+              <div key={lang} className="bubblesColLabel">
+                <strong>{formatLangLabel(lang)}</strong>
+                <span>Text</span>
+              </div>
+            ))}
+          </div>
+        )}
 
-        {state.lastServerError ? (
+        {state.lastServerError && !lean ? (
           <div className="errorBox">
             <strong>Server error</strong>
             {"\n"}
@@ -313,13 +324,15 @@ export function TranscriptView({
         ) : null}
 
         <div className="bubbleList">
-          {rows.length === 0 ? (
-            <div className="placeholder">
-              Waiting for `turn.*` / `stt.*` events. You can connect to the WS server or use
-              the dev mock generator.
-            </div>
+          {visibleRows.length === 0 ? (
+            lean ? null : (
+              <div className="placeholder">
+                Waiting for `turn.*` / `stt.*` events. You can connect to the WS server or use
+                the dev mock generator.
+              </div>
+            )
           ) : (
-            rows.map((row) => (
+            visibleRows.map((row) => (
               <div
                 key={row.group.groupId}
                 className="bubbleRow"

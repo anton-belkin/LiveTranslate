@@ -14,6 +14,21 @@
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
 
+.shellLean {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 8px 12px 24px;
+}
+
+.leanBody {
+  scrollbar-width: none;
+}
+
+.leanBody::-webkit-scrollbar {
+  display: none;
+}
+
 .header {
   display: flex;
   align-items: baseline;
@@ -137,8 +152,22 @@
   margin-top: 12px;
 }
 
+.appRoot.lean .main {
+  margin-top: 0;
+}
+
 .bubbles {
   padding: 12px;
+}
+
+.appRoot.lean .bubbles {
+  padding: 8px;
+}
+
+.appRoot.lean .card {
+  border: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .bubblesHeader {

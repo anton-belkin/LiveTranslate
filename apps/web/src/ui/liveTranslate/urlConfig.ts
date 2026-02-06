@@ -6,20 +6,23 @@ export type UrlConfig = {
   targetLangs: Lang[];
   showOriginal: boolean;
   showSummary: boolean;
+  lean: boolean;
   staticContext?: string;
 };
 
 export function parseUrlConfig(): UrlConfig {
   const params = new URLSearchParams(window.location.search);
   const langs = parseLangsParam(params.get("langs"));
+  const lean = parseBoolParam(params.get("lean"), false);
   const showOriginal = parseBoolParam(params.get("showOriginal"), true);
-  const showSummary = parseBoolParam(params.get("showSummary"), true);
+  const showSummary = parseBoolParam(params.get("showSummary"), !lean);
   const staticContext = params.get("staticContext")?.trim() || undefined;
 
   return {
     targetLangs: langs,
     showOriginal,
     showSummary,
+    lean,
     staticContext,
   };
 }
