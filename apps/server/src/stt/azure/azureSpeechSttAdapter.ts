@@ -70,6 +70,7 @@ export class AzureSpeechSttAdapter {
   private readonly targetSampleRateHz: number;
   private readonly enableDiarization: boolean;
   private readonly specialWords: string[];
+  private readonly specialWordsBoost: number;
 
   private recognizer: sdk.SpeechRecognizer | null = null;
   private diarizationRecognizer: sdk.ConversationTranscriber | null = null;
@@ -94,6 +95,7 @@ export class AzureSpeechSttAdapter {
     onSttEvent?: (evt: SttEvent) => void;
     config: AzureSpeechConfig;
     specialWords?: string[];
+    specialWordsBoost?: number;
   }) {
     this.sessionId = args.sessionId;
     this.emit = args.emit;
@@ -105,6 +107,7 @@ export class AzureSpeechSttAdapter {
     this.specialWords = (args.specialWords ?? [])
       .map((word) => word.trim())
       .filter((word, idx, list) => word.length > 0 && list.indexOf(word) === idx);
+    this.specialWordsBoost = this.clampInt(args.specialWordsBoost ?? 1, 1, 5);
   }
 
   start() {
@@ -307,17 +310,19 @@ export class AzureSpeechSttAdapter {
   }
 
   private applyPhraseList(recognizer: sdk.SpeechRecognizer) {
-    if (this.specialWords.length === 0) return;
+    if (this.specialWords.length === 0 || this.specialWordsBoost <= 0) return;
     try {
       const phraseList = sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      for (const word of this.specialWords) {
-        phraseList.addPhrase(word);
+      for (let i = 0; i < this.specialWordsBoost; i += 1) {
+        for (const word of this.specialWords) {
+          phraseList.addPhrase(word);
+        }
       }
       // #region agent log
       debugLog({
         location: "azureSpeechSttAdapter.ts:applyPhraseList",
         message: "phrase list applied",
-        data: { count: this.specialWords.length },
+        data: { count: this.specialWords.length, boost: this.specialWordsBoost },
         timestamp: Date.now(),
         sessionId: "debug-session",
         runId: "run1",
@@ -337,6 +342,14 @@ export class AzureSpeechSttAdapter {
       });
       // #endregion
     }
+  }
+
+  private clampInt(value: number, min: number, max: number) {
+    if (!Number.isFinite(value)) return min;
+    const rounded = Math.round(value);
+    if (rounded < min) return min;
+    if (rounded > max) return max;
+    return rounded;
   }
 
   private bindSttHandlers(recognizer: sdk.SpeechRecognizer) {

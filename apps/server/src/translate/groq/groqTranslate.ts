@@ -42,10 +42,11 @@ export async function groqTranslate(
   const systemPrompt =
     "You are a translation engine. Return only valid JSON with keys: " +
     "`translations` (map of language code to translated text), " +
-    "`sourceLang` (language code of the original utterance). " +
-    "If `isFinal` is true, also return `summary` in English that updates the " +
-    "full-meeting summary by combining the existing `summary` with the latest `history` " +
-    "and current `utterance`. " +
+    "`sourceLang` (lowercase ISO-639-1 code for the original utterance, e.g. en/de/ru). " +
+    "If `isFinal` is true, also return `summary` in English that rewrites the " +
+    "full-meeting summary by compressing the existing `summary` plus the latest `history` " +
+    "and current `utterance` into a single coherent summary (do not append). " +
+    "If unsure about the source language, return `und`. " +
     "Do not include markdown or extra text.";
 
   const res = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -83,10 +84,7 @@ export async function groqTranslate(
   return {
     translations,
     summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
-    sourceLang:
-      typeof parsed.sourceLang === "string" && parsed.sourceLang.trim().length > 0
-        ? (parsed.sourceLang.trim().toLowerCase() as Lang)
-        : undefined,
+    sourceLang: normalizeSourceLang(parsed.sourceLang, input.targetLangs),
   };
 }
 
@@ -126,4 +124,25 @@ function safeJsonParse(content: string): {
     }
   }
   return null;
+}
+
+function normalizeSourceLang(value: unknown, targetLangs: Lang[]): Lang | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const lower = trimmed.toLowerCase();
+  if (lower === "und" || lower === "unknown") return undefined;
+  const normalized = lower.split(/[-_]/)[0];
+  if (normalized.length >= 2 && normalized.length <= 3) {
+    return normalized as Lang;
+  }
+  const map: Record<string, Lang> = {
+    english: "en",
+    german: "de",
+    deutsch: "de",
+    russian: "ru",
+  };
+  if (map[normalized]) return map[normalized];
+  if (targetLangs.includes(normalized as Lang)) return normalized as Lang;
+  return undefined;
 }

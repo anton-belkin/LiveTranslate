@@ -30,6 +30,7 @@ type Entry = {
   targetLangs: Lang[];
   staticContext?: string;
   specialWords?: string[];
+  specialWordsBoost?: number;
   summary: string;
   history: TranslationHistoryEntry[];
   revisionByKey: Map<string, number>;
@@ -75,6 +76,7 @@ export function registerAzureStt(ws: WsServerApi) {
       langs?: { lang1: Lang; lang2: Lang };
       staticContext?: string;
       specialWords?: string[];
+      specialWordsBoost?: number;
     },
   ) {
     const existing = entries.get(sessionId);
@@ -85,6 +87,7 @@ export function registerAzureStt(ws: WsServerApi) {
       sessionId,
       config,
       specialWords: hello.specialWords,
+      specialWordsBoost: hello.specialWordsBoost,
       emit: (msg) => {
         ws.emitToSession(sessionId, msg);
       },
@@ -112,6 +115,7 @@ export function registerAzureStt(ws: WsServerApi) {
       targetLangs: resolveTargetLangs(hello),
       staticContext: hello.staticContext ?? groqConfig.staticContext,
       specialWords: hello.specialWords,
+      specialWordsBoost: hello.specialWordsBoost,
       summary: "",
       history: [],
       revisionByKey: new Map(),
@@ -256,7 +260,7 @@ export function registerAzureStt(ws: WsServerApi) {
     });
     // #endregion
 
-    const sourceLang = result.sourceLang ?? evt.lang;
+    const sourceLang = result.sourceLang;
     const fromLang = (evt.lang ?? "und") as Lang;
     const translations: Record<string, string> = {};
     for (const lang of entry.targetLangs) {

@@ -12,6 +12,9 @@ export function App() {
   const [showSummary, setShowSummary] = useState(urlConfig.showSummary);
   const [staticContext, setStaticContext] = useState(urlConfig.staticContext ?? "");
   const [specialWordsText, setSpecialWordsText] = useState(urlConfig.specialWords ?? "");
+  const [specialWordsBoost, setSpecialWordsBoost] = useState(
+    urlConfig.specialWordsBoost ?? 1,
+  );
   const [showContextPopover, setShowContextPopover] = useState(false);
   const [audioSource, setAudioSource] = useState(urlConfig.audioSource);
   const isLean = urlConfig.lean;
@@ -31,6 +34,10 @@ export function App() {
   useEffect(() => {
     updateUrlParam("specialWords", specialWordsText.replace(/\r\n/g, "\n").trim());
   }, [specialWordsText]);
+
+  useEffect(() => {
+    updateUrlParam("specialWordsBoost", String(specialWordsBoost));
+  }, [specialWordsBoost]);
 
   useEffect(() => {
     updateUrlParam("audioSource", audioSource);
@@ -57,6 +64,7 @@ export function App() {
     targetLangs: urlConfig.targetLangs,
     staticContext: staticContext.trim() || undefined,
     specialWords,
+    specialWordsBoost,
     audioSource,
   });
 
@@ -161,6 +169,22 @@ export function App() {
                       value={specialWordsText}
                       onChange={(ev) => setSpecialWordsText(ev.target.value)}
                       placeholder={`e.g.\nKubernetes\nAnya\nX AE A-12`}
+                    />
+                  </label>
+                  <label className="fieldLabel">
+                    <span>Special words boost (1-5)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={1}
+                      max={5}
+                      value={specialWordsBoost}
+                      onChange={(ev) => {
+                        const next = Number(ev.target.value);
+                        if (!Number.isFinite(next)) return;
+                        const clamped = Math.min(5, Math.max(1, Math.round(next)));
+                        setSpecialWordsBoost(clamped);
+                      }}
                     />
                   </label>
                   <label className="fieldLabel">

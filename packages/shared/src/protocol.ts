@@ -44,6 +44,10 @@ export const ClientHelloSchema = z.object({
    */
   specialWords: z.array(z.string().min(1)).optional(),
   /**
+   * Optional: phrase bias strength (1-5).
+   */
+  specialWordsBoost: z.number().int().min(1).max(5).optional(),
+  /**
    * Deprecated: legacy two-column config.
    */
   langs: z

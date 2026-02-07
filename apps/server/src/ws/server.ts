@@ -108,7 +108,7 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
       return false;
     }
     try {
-      socket.send(JSON.stringify(parsed.data));
+      socket.send(JSON.stringify(msg));
       return true;
     } catch {
       // #region agent log

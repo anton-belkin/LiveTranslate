@@ -9,6 +9,7 @@ export type UrlConfig = {
   lean: boolean;
   staticContext?: string;
   specialWords?: string;
+  specialWordsBoost?: number;
   audioSource: "mic" | "tab" | "both";
 };
 
@@ -20,6 +21,7 @@ export function parseUrlConfig(): UrlConfig {
   const showSummary = parseBoolParam(params.get("showSummary"), !lean);
   const staticContext = params.get("staticContext")?.trim() || undefined;
   const specialWords = parseMultilineParam(params.get("specialWords"));
+  const specialWordsBoost = parseIntParam(params.get("specialWordsBoost"), 1, 1, 5);
   const audioSource = parseAudioSourceParam(params.get("audioSource"));
 
   return {
@@ -29,6 +31,7 @@ export function parseUrlConfig(): UrlConfig {
     lean,
     staticContext,
     specialWords,
+    specialWordsBoost,
     audioSource,
   };
 }
@@ -69,4 +72,14 @@ function parseMultilineParam(value: string | null) {
   if (value == null) return undefined;
   const normalized = value.replace(/\r\n/g, "\n").trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseIntParam(value: string | null, fallback: number, min: number, max: number) {
+  if (value == null || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  const rounded = Math.round(parsed);
+  if (rounded < min) return min;
+  if (rounded > max) return max;
+  return rounded;
 }
