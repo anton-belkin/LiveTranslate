@@ -28,16 +28,22 @@ type UseLiveTranslateStreamArgs = {
   dispatch: Dispatch<TranscriptAction>;
   targetLangs: Lang[];
   staticContext?: string;
+  specialWords?: string[];
   audioSource: "mic" | "tab" | "both";
 };
 
-function makeHello(args: { targetLangs: Lang[]; staticContext?: string }): ClientHello {
+function makeHello(args: {
+  targetLangs: Lang[];
+  staticContext?: string;
+  specialWords?: string[];
+}): ClientHello {
   const targetLangs = args.targetLangs.length > 0 ? args.targetLangs : undefined;
   return {
     type: "client.hello",
     protocolVersion: PROTOCOL_VERSION,
     ...(targetLangs ? { targetLangs } : {}),
     staticContext: args.staticContext,
+    specialWords: args.specialWords && args.specialWords.length > 0 ? args.specialWords : undefined,
     client: {
       userAgent: navigator.userAgent,
     },
@@ -49,6 +55,7 @@ export function useLiveTranslateStream({
   dispatch,
   targetLangs,
   staticContext,
+  specialWords,
   audioSource,
 }: UseLiveTranslateStreamArgs) {
   const socketRef = useRef<WebSocket | null>(null);
@@ -180,7 +187,7 @@ export function useLiveTranslateStream({
 
     socket.onopen = () => {
       dispatch({ type: "connection.update", status: "open" });
-      socket.send(JSON.stringify(makeHello({ targetLangs, staticContext })));
+      socket.send(JSON.stringify(makeHello({ targetLangs, staticContext, specialWords })));
     };
 
     socket.onmessage = (ev) => {
@@ -253,7 +260,7 @@ export function useLiveTranslateStream({
       dispatch({ type: "connection.update", status: "closed" });
       void stopMic();
     };
-  }, [dispatch, startMic, stopMic, url, targetLangs, staticContext]);
+  }, [dispatch, startMic, stopMic, url, targetLangs, staticContext, specialWords]);
 
   return { start, stop };
 }

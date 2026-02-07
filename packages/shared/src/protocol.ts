@@ -40,6 +40,10 @@ export const ClientHelloSchema = z.object({
    */
   staticContext: z.string().optional(),
   /**
+   * Optional: special words/phrases to improve STT recognition.
+   */
+  specialWords: z.array(z.string().min(1)).optional(),
+  /**
    * Deprecated: legacy two-column config.
    */
   langs: z
@@ -164,6 +168,10 @@ export const TranslatePartialSchema = z.object({
    * Streaming delta for the translated text.
    */
   textDelta: z.string(),
+  /**
+   * Language of the original utterance as detected by the LLM.
+   */
+  sourceLang: LangSchema.optional(),
 });
 export type TranslatePartial = z.infer<typeof TranslatePartialSchema>;
 
@@ -175,6 +183,10 @@ export const TranslateFinalSchema = z.object({
   from: LangSchema,
   to: LangSchema,
   text: z.string(),
+  /**
+   * Language of the original utterance as detected by the LLM.
+   */
+  sourceLang: LangSchema.optional(),
 });
 export type TranslateFinal = z.infer<typeof TranslateFinalSchema>;
 
@@ -191,6 +203,10 @@ export const TranslateReviseSchema = z.object({
   to: LangSchema,
   revision: z.number().int().nonnegative(),
   fullText: z.string(),
+  /**
+   * Language of the original utterance as detected by the LLM.
+   */
+  sourceLang: LangSchema.optional(),
 });
 export type TranslateRevise = z.infer<typeof TranslateReviseSchema>;
 

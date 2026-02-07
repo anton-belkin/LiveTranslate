@@ -8,6 +8,7 @@ export type UrlConfig = {
   showSummary: boolean;
   lean: boolean;
   staticContext?: string;
+  specialWords?: string;
   audioSource: "mic" | "tab" | "both";
 };
 
@@ -18,6 +19,7 @@ export function parseUrlConfig(): UrlConfig {
   const showOriginal = parseBoolParam(params.get("showOriginal"), true);
   const showSummary = parseBoolParam(params.get("showSummary"), !lean);
   const staticContext = params.get("staticContext")?.trim() || undefined;
+  const specialWords = parseMultilineParam(params.get("specialWords"));
   const audioSource = parseAudioSourceParam(params.get("audioSource"));
 
   return {
@@ -26,6 +28,7 @@ export function parseUrlConfig(): UrlConfig {
     showSummary,
     lean,
     staticContext,
+    specialWords,
     audioSource,
   };
 }
@@ -60,4 +63,10 @@ function parseAudioSourceParam(value: string | null): "mic" | "tab" | "both" {
   const normalized = value?.trim().toLowerCase();
   if (normalized === "mic" || normalized === "tab" || normalized === "both") return normalized;
   return "tab";
+}
+
+function parseMultilineParam(value: string | null) {
+  if (value == null) return undefined;
+  const normalized = value.replace(/\r\n/g, "\n").trim();
+  return normalized.length > 0 ? normalized : undefined;
 }

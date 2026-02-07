@@ -35,6 +35,7 @@ export type TurnTranslation = {
   to: Lang;
   text: string;
   isFinal: boolean;
+  sourceLang?: Lang;
   /**
    * Used only to ignore duplicate `translate.partial` deltas.
    */
@@ -75,6 +76,7 @@ export type TranscriptAction =
   | { type: "connection.update"; status: ConnectionStatus; error?: string }
   | { type: "server.message"; message: ServerToClientMessage }
   | { type: "transcript.reset" }
+  | { type: "transcript.stopFinalize" }
   | { type: "url.set"; url: string };
 
 export const DEFAULT_WS_URL = "ws://localhost:8787";
@@ -187,6 +189,57 @@ export function transcriptReducer(
         ...makeInitialState(),
         url: state.url,
       };
+
+    case "transcript.stopFinalize": {
+      let changed = false;
+      const nextTurns: Record<string, Turn> = {};
+
+      const appendEllipsis = (text: string) => {
+        const trimmed = text.trimEnd();
+        if (!trimmed) return text;
+        if (trimmed.endsWith("...")) return trimmed;
+        return `${trimmed}...`;
+      };
+
+      for (const [turnId, turn] of Object.entries(state.turnsById)) {
+        let turnChanged = false;
+        let segmentsById = turn.segmentsById;
+        let translationsByLang = turn.translationsByLang;
+
+        for (const segmentId of turn.segmentOrder) {
+          const seg = segmentsById[segmentId];
+          if (!seg || seg.isFinal) continue;
+          const nextText = appendEllipsis(seg.text);
+          if (nextText !== seg.text || !seg.isFinal) {
+            if (!turnChanged) segmentsById = { ...segmentsById };
+            segmentsById[segmentId] = { ...seg, text: nextText, isFinal: true };
+            turnChanged = true;
+            changed = true;
+          }
+        }
+
+        for (const [lang, translation] of Object.entries(translationsByLang)) {
+          if (!translation || translation.isFinal) continue;
+          const nextText = appendEllipsis(translation.text);
+          if (nextText !== translation.text || !translation.isFinal) {
+            if (!turnChanged) translationsByLang = { ...translationsByLang };
+            translationsByLang[lang] = { ...translation, text: nextText, isFinal: true };
+            turnChanged = true;
+            changed = true;
+          }
+        }
+
+        if (turnChanged) {
+          nextTurns[turnId] = { ...turn, segmentsById, translationsByLang };
+        }
+      }
+
+      if (!changed) return state;
+      return {
+        ...state,
+        turnsById: { ...state.turnsById, ...nextTurns },
+      };
+    }
 
     case "connection.update":
       return {
@@ -328,6 +381,7 @@ export function transcriptReducer(
               to: msg.to,
               text: nextText,
               isFinal: false,
+              sourceLang: msg.sourceLang ?? prev?.sourceLang,
               lastDelta: msg.textDelta,
             },
           },
@@ -363,6 +417,7 @@ export function transcriptReducer(
               to: msg.to,
               text: msg.text,
               isFinal: true,
+              sourceLang: msg.sourceLang ?? prev?.sourceLang,
             },
           },
         };
@@ -397,6 +452,7 @@ export function transcriptReducer(
               to: msg.to,
               text: msg.fullText,
               isFinal: false,
+              sourceLang: msg.sourceLang ?? prev?.sourceLang,
             },
           },
         };

@@ -29,6 +29,7 @@ type Entry = {
   lastFrameAt: number;
   targetLangs: Lang[];
   staticContext?: string;
+  specialWords?: string[];
   summary: string;
   history: TranslationHistoryEntry[];
   revisionByKey: Map<string, number>;
@@ -67,7 +68,15 @@ export function registerAzureStt(ws: WsServerApi) {
     return normalizeLangList(groqConfig.targetLangs);
   }
 
-  function ensureEntry(sessionId: string, hello: { targetLangs?: Lang[]; langs?: { lang1: Lang; lang2: Lang }; staticContext?: string }) {
+  function ensureEntry(
+    sessionId: string,
+    hello: {
+      targetLangs?: Lang[];
+      langs?: { lang1: Lang; lang2: Lang };
+      staticContext?: string;
+      specialWords?: string[];
+    },
+  ) {
     const existing = entries.get(sessionId);
     if (existing) return existing;
 
@@ -75,6 +84,7 @@ export function registerAzureStt(ws: WsServerApi) {
     const adapter = new AzureSpeechSttAdapter({
       sessionId,
       config,
+      specialWords: hello.specialWords,
       emit: (msg) => {
         ws.emitToSession(sessionId, msg);
       },
@@ -101,6 +111,7 @@ export function registerAzureStt(ws: WsServerApi) {
       lastFrameAt: Date.now(),
       targetLangs: resolveTargetLangs(hello),
       staticContext: hello.staticContext ?? groqConfig.staticContext,
+      specialWords: hello.specialWords,
       summary: "",
       history: [],
       revisionByKey: new Map(),
@@ -245,6 +256,7 @@ export function registerAzureStt(ws: WsServerApi) {
     });
     // #endregion
 
+    const sourceLang = result.sourceLang ?? evt.lang;
     const fromLang = (evt.lang ?? "und") as Lang;
     const translations: Record<string, string> = {};
     for (const lang of entry.targetLangs) {
@@ -269,6 +281,7 @@ export function registerAzureStt(ws: WsServerApi) {
           to: key as Lang,
           revision: nextRev,
           fullText: translated,
+          sourceLang,
         });
         // #region agent log
         debugLog({
@@ -290,6 +303,7 @@ export function registerAzureStt(ws: WsServerApi) {
           from: fromLang,
           to: key as Lang,
           text: translated,
+          sourceLang,
         });
         // #region agent log
         debugLog({
@@ -309,7 +323,7 @@ export function registerAzureStt(ws: WsServerApi) {
       entry.finalizedTurns.add(evt.turnId);
       entry.history.push({
         text,
-        lang: evt.lang,
+        lang: sourceLang ?? evt.lang,
         translations,
       });
       if (entry.history.length > 10) entry.history.splice(0, entry.history.length - 10);

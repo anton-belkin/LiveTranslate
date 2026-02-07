@@ -50,6 +50,13 @@ function getTurnLang(turn: Turn): Lang | undefined {
   return undefined;
 }
 
+function getTurnSourceLang(turn: Turn): Lang | undefined {
+  for (const translation of Object.values(turn.translationsByLang)) {
+    if (translation?.sourceLang) return translation.sourceLang;
+  }
+  return undefined;
+}
+
 function getTurnStartMs(turn: Turn) {
   if (typeof turn.startMs === "number") return turn.startMs;
   for (const segmentId of turn.segmentOrder) {
@@ -165,6 +172,7 @@ export function TranscriptView({
       let originalHasText = false;
       let originalIsFinal = true;
       let originalIsPartial = false;
+      let sourceLang: Lang | undefined = undefined;
 
       const translations = new Map<
         Lang,
@@ -189,6 +197,8 @@ export function TranscriptView({
 
       for (const turn of group.turns) {
         const turnLang = getTurnLang(turn);
+        const turnSourceLang = getTurnSourceLang(turn);
+        if (turnSourceLang) sourceLang = turnSourceLang;
         const original = collectSegmentText(turn, turnLang);
         if (original.text) {
           originalParts.push(original.text);
@@ -221,6 +231,7 @@ export function TranscriptView({
         originalText,
         originalPartial,
         translations,
+        sourceLang,
       };
     });
   }, [groups, targetLangs]);
@@ -303,13 +314,11 @@ export function TranscriptView({
             {showOriginal ? (
               <div className="bubblesColLabel">
                 <strong>Original</strong>
-                <span>Text</span>
               </div>
             ) : null}
             {targetLangs.map((lang) => (
               <div key={lang} className="bubblesColLabel">
                 <strong>{formatLangLabel(lang)}</strong>
-                <span>Text</span>
               </div>
             ))}
           </div>
@@ -324,14 +333,7 @@ export function TranscriptView({
         ) : null}
 
         <div className="bubbleList">
-          {visibleRows.length === 0 ? (
-            lean ? null : (
-              <div className="placeholder">
-                Waiting for `turn.*` / `stt.*` events. You can connect to the WS server or use
-                the dev mock generator.
-              </div>
-            )
-          ) : (
+          {visibleRows.length === 0 ? null : (
             visibleRows.map((row) => (
               <div
                 key={row.group.groupId}
@@ -352,16 +354,17 @@ export function TranscriptView({
                     )}
                   </div>
                 ) : null}
-                {targetLangs.map((lang, idx) => {
+                {targetLangs.map((lang) => {
                   const col = row.translations.get(lang);
                   const text = col?.parts.join(col.parts.length > 1 ? "\n" : " ") ?? "";
                   const isPartial = col?.hasText && (col.isPartial || !col.isFinal);
                   const missing = col?.missing ?? false;
+                  const isOriginalLang = Boolean(row.sourceLang && lang === row.sourceLang);
                   return (
                     <div key={`${row.group.groupId}:${lang}`} className="bubbleCell">
                       {text ? (
                         <div
-                          className={`bubble ${idx % 2 === 1 ? "bubbleAlt" : ""} ${
+                          className={`bubble ${isOriginalLang ? "bubbleAlt" : ""} ${
                             isPartial ? "segPartial" : "segFinal"
                           }`}
                         >

@@ -69,6 +69,7 @@ export class AzureSpeechSttAdapter {
   private readonly config: AzureSpeechConfig;
   private readonly targetSampleRateHz: number;
   private readonly enableDiarization: boolean;
+  private readonly specialWords: string[];
 
   private recognizer: sdk.SpeechRecognizer | null = null;
   private diarizationRecognizer: sdk.ConversationTranscriber | null = null;
@@ -92,6 +93,7 @@ export class AzureSpeechSttAdapter {
     onError: (err: Error) => void;
     onSttEvent?: (evt: SttEvent) => void;
     config: AzureSpeechConfig;
+    specialWords?: string[];
   }) {
     this.sessionId = args.sessionId;
     this.emit = args.emit;
@@ -100,6 +102,9 @@ export class AzureSpeechSttAdapter {
     this.config = args.config;
     this.targetSampleRateHz = clampSampleRate(args.config.sampleRateHz);
     this.enableDiarization = Boolean(args.config.enableDiarization);
+    this.specialWords = (args.specialWords ?? [])
+      .map((word) => word.trim())
+      .filter((word, idx, list) => word.length > 0 && list.indexOf(word) === idx);
   }
 
   start() {
@@ -143,6 +148,7 @@ export class AzureSpeechSttAdapter {
       audioConfig,
     );
     this.bindSttHandlers(this.recognizer);
+    this.applyPhraseList(this.recognizer);
     this.recognizer.startContinuousRecognitionAsync(
       () => {
         if (this.state !== "stopping" && this.state !== "stopped") {
@@ -298,6 +304,39 @@ export class AzureSpeechSttAdapter {
       () => undefined,
       (err) => this.onError(new Error(String(err))),
     );
+  }
+
+  private applyPhraseList(recognizer: sdk.SpeechRecognizer) {
+    if (this.specialWords.length === 0) return;
+    try {
+      const phraseList = sdk.PhraseListGrammar.fromRecognizer(recognizer);
+      for (const word of this.specialWords) {
+        phraseList.addPhrase(word);
+      }
+      // #region agent log
+      debugLog({
+        location: "azureSpeechSttAdapter.ts:applyPhraseList",
+        message: "phrase list applied",
+        data: { count: this.specialWords.length },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H4",
+      });
+      // #endregion
+    } catch (err) {
+      // #region agent log
+      debugLog({
+        location: "azureSpeechSttAdapter.ts:applyPhraseList",
+        message: "phrase list failed",
+        data: { error: String(err) },
+        timestamp: Date.now(),
+        sessionId: "debug-session",
+        runId: "run1",
+        hypothesisId: "H4",
+      });
+      // #endregion
+    }
   }
 
   private bindSttHandlers(recognizer: sdk.SpeechRecognizer) {

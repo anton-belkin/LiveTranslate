@@ -20,6 +20,7 @@ export type GroqTranslateInput = {
 export type GroqTranslateOutput = {
   translations: Record<string, string>;
   summary?: string;
+  sourceLang?: Lang;
 };
 
 export async function groqTranslate(
@@ -40,8 +41,11 @@ export async function groqTranslate(
 
   const systemPrompt =
     "You are a translation engine. Return only valid JSON with keys: " +
-    "`translations` (map of language code to translated text). " +
-    "If `isFinal` is true, also return `summary` in English. " +
+    "`translations` (map of language code to translated text), " +
+    "`sourceLang` (language code of the original utterance). " +
+    "If `isFinal` is true, also return `summary` in English that updates the " +
+    "full-meeting summary by combining the existing `summary` with the latest `history` " +
+    "and current `utterance`. " +
     "Do not include markdown or extra text.";
 
   const res = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -79,6 +83,10 @@ export async function groqTranslate(
   return {
     translations,
     summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
+    sourceLang:
+      typeof parsed.sourceLang === "string" && parsed.sourceLang.trim().length > 0
+        ? (parsed.sourceLang.trim().toLowerCase() as Lang)
+        : undefined,
   };
 }
 
@@ -93,7 +101,11 @@ function normalizeTranslations(input: unknown): Record<string, string> {
   return result;
 }
 
-function safeJsonParse(content: string): { translations?: unknown; summary?: unknown } | null {
+function safeJsonParse(content: string): {
+  translations?: unknown;
+  summary?: unknown;
+  sourceLang?: unknown;
+} | null {
   const trimmed = content.trim();
   if (!trimmed) return null;
 

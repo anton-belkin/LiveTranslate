@@ -9,12 +9,28 @@ export function App() {
   const [state, dispatch] = useReducer(transcriptReducer, undefined, makeInitialState);
   const urlConfig = useMemo(() => parseUrlConfig(), []);
   const [showOriginal, setShowOriginal] = useState(urlConfig.showOriginal);
+  const [showSummary, setShowSummary] = useState(urlConfig.showSummary);
+  const [staticContext, setStaticContext] = useState(urlConfig.staticContext ?? "");
+  const [specialWordsText, setSpecialWordsText] = useState(urlConfig.specialWords ?? "");
+  const [showContextPopover, setShowContextPopover] = useState(false);
   const [audioSource, setAudioSource] = useState(urlConfig.audioSource);
   const isLean = urlConfig.lean;
 
   useEffect(() => {
     updateUrlParam("showOriginal", showOriginal ? "1" : "0");
   }, [showOriginal]);
+
+  useEffect(() => {
+    updateUrlParam("showSummary", showSummary ? "1" : "0");
+  }, [showSummary]);
+
+  useEffect(() => {
+    updateUrlParam("staticContext", staticContext.trim());
+  }, [staticContext]);
+
+  useEffect(() => {
+    updateUrlParam("specialWords", specialWordsText.replace(/\r\n/g, "\n").trim());
+  }, [specialWordsText]);
 
   useEffect(() => {
     updateUrlParam("audioSource", audioSource);
@@ -26,11 +42,21 @@ export function App() {
     return () => document.body.classList.remove("leanBody");
   }, [isLean]);
 
+  const specialWords = useMemo(
+    () =>
+      specialWordsText
+        .split(/\r?\n/g)
+        .map((word) => word.trim())
+        .filter((word) => word.length > 0),
+    [specialWordsText],
+  );
+
   const stream = useLiveTranslateStream({
     url: state.url,
     dispatch,
     targetLangs: urlConfig.targetLangs,
-    staticContext: urlConfig.staticContext,
+    staticContext: staticContext.trim() || undefined,
+    specialWords,
     audioSource,
   });
 
@@ -77,7 +103,10 @@ export function App() {
             </button>
             <button
               className="btn btnDanger"
-              onClick={stream.stop}
+              onClick={() => {
+                dispatch({ type: "transcript.stopFinalize" });
+                void stream.stop();
+              }}
               disabled={state.status !== "open"}
             >
               Stop
@@ -97,6 +126,14 @@ export function App() {
               <span>Originals</span>
             </label>
             <label className="toggle">
+              <input
+                type="checkbox"
+                checked={showSummary}
+                onChange={(ev) => setShowSummary(ev.target.checked)}
+              />
+              <span>Summary</span>
+            </label>
+            <label className="toggle">
               <span>Audio</span>
               <select
                 value={audioSource}
@@ -107,6 +144,38 @@ export function App() {
                 <option value="both">Both</option>
               </select>
             </label>
+            <div className="popover">
+              <button
+                className="btn btnSmall"
+                onClick={() => setShowContextPopover((prev) => !prev)}
+              >
+                Context
+              </button>
+              {showContextPopover ? (
+                <div className="popoverPanel">
+                  <label className="fieldLabel">
+                    <span>Special words (one per line)</span>
+                    <textarea
+                      className="input textarea"
+                      rows={4}
+                      value={specialWordsText}
+                      onChange={(ev) => setSpecialWordsText(ev.target.value)}
+                      placeholder={`e.g.\nKubernetes\nAnya\nX AE A-12`}
+                    />
+                  </label>
+                  <label className="fieldLabel">
+                    <span>Static meeting context</span>
+                    <textarea
+                      className="input textarea"
+                      rows={4}
+                      value={staticContext}
+                      onChange={(ev) => setStaticContext(ev.target.value)}
+                      placeholder="Short brief for better summaries/translations"
+                    />
+                  </label>
+                </div>
+              ) : null}
+            </div>
             {state.lastSocketError ? <span className="pill">{state.lastSocketError}</span> : null}
           </div>
         )}
@@ -114,7 +183,7 @@ export function App() {
         <TranscriptView
           state={state}
           showOriginal={showOriginal}
-          showSummary={urlConfig.showSummary}
+          showSummary={showSummary}
           lean={isLean}
         />
       </div>
