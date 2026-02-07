@@ -28,6 +28,7 @@ type UseLiveTranslateStreamArgs = {
   dispatch: Dispatch<TranscriptAction>;
   targetLangs: Lang[];
   staticContext?: string;
+  audioSource: "mic" | "tab" | "both";
 };
 
 function makeHello(args: { targetLangs: Lang[]; staticContext?: string }): ClientHello {
@@ -48,6 +49,7 @@ export function useLiveTranslateStream({
   dispatch,
   targetLangs,
   staticContext,
+  audioSource,
 }: UseLiveTranslateStreamArgs) {
   const socketRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicStreamerHandle | null>(null);
@@ -64,6 +66,7 @@ export function useLiveTranslateStream({
     if (micRef.current) return;
     try {
       micRef.current = await startMicStreamer({
+        audioSource,
         onFrame: (frame) => {
           const socket = socketRef.current;
           const sessionId = sessionIdRef.current;
@@ -131,10 +134,10 @@ export function useLiveTranslateStream({
       dispatch({
         type: "connection.update",
         status: "error",
-        error: `Microphone error: ${String(err)}`,
+        error: `Audio capture error: ${String(err)}`,
       });
     }
-  }, [dispatch]);
+  }, [audioSource, dispatch]);
 
   const stop = useCallback(async () => {
     const socket = socketRef.current;
@@ -171,6 +174,9 @@ export function useLiveTranslateStream({
 
     const socket = new WebSocket(url);
     socketRef.current = socket;
+
+    // Start capture from the user gesture so getDisplayMedia works (Safari/Chrome).
+    void startMic();
 
     socket.onopen = () => {
       dispatch({ type: "connection.update", status: "open" });
@@ -228,7 +234,6 @@ export function useLiveTranslateStream({
 
       if (res.data.type === "server.ready") {
         sessionIdRef.current = res.data.sessionId;
-        void startMic();
       }
 
       dispatch({ type: "server.message", message: res.data });

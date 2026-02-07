@@ -9,11 +9,16 @@ export function App() {
   const [state, dispatch] = useReducer(transcriptReducer, undefined, makeInitialState);
   const urlConfig = useMemo(() => parseUrlConfig(), []);
   const [showOriginal, setShowOriginal] = useState(urlConfig.showOriginal);
+  const [audioSource, setAudioSource] = useState(urlConfig.audioSource);
   const isLean = urlConfig.lean;
 
   useEffect(() => {
     updateUrlParam("showOriginal", showOriginal ? "1" : "0");
   }, [showOriginal]);
+
+  useEffect(() => {
+    updateUrlParam("audioSource", audioSource);
+  }, [audioSource]);
 
   useEffect(() => {
     if (!isLean) return;
@@ -26,6 +31,7 @@ export function App() {
     dispatch,
     targetLangs: urlConfig.targetLangs,
     staticContext: urlConfig.staticContext,
+    audioSource,
   });
 
   useEffect(() => {
@@ -89,6 +95,17 @@ export function App() {
                 onChange={(ev) => setShowOriginal(ev.target.checked)}
               />
               <span>Originals</span>
+            </label>
+            <label className="toggle">
+              <span>Audio</span>
+              <select
+                value={audioSource}
+                onChange={(ev) => setAudioSource(ev.target.value as "mic" | "tab" | "both")}
+              >
+                <option value="tab">Tab/System</option>
+                <option value="mic">Mic</option>
+                <option value="both">Both</option>
+              </select>
             </label>
             {state.lastSocketError ? <span className="pill">{state.lastSocketError}</span> : null}
           </div>

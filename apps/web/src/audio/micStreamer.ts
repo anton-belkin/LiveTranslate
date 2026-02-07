@@ -6,6 +6,7 @@ export type Pcm16Frame = {
 
 type StartMicStreamerOpts = {
   targetSampleRateHz?: number;
+  audioSource: "mic" | "tab" | "both";
   onFrame: (frame: Pcm16Frame) => void;
 };
 
@@ -18,7 +19,31 @@ export type MicStreamerHandle = {
 export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicStreamerHandle> {
   const targetSampleRateHz = opts.targetSampleRateHz ?? 16000;
 
-  const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const mediaStreams: MediaStream[] = [];
+  if (opts.audioSource === "mic" || opts.audioSource === "both") {
+    mediaStreams.push(await navigator.mediaDevices.getUserMedia({ audio: true }));
+  }
+  if (opts.audioSource === "tab" || opts.audioSource === "both") {
+    if (!navigator.mediaDevices.getDisplayMedia) {
+      throw new Error("Browser tab/system audio capture is not supported.");
+    }
+    const displayStream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+    if (displayStream.getAudioTracks().length === 0) {
+      for (const track of displayStream.getTracks()) track.stop();
+      if (opts.audioSource === "both") {
+        // Fall back to mic-only if screen/tab audio isn't available (e.g., Safari).
+      } else {
+        throw new Error(
+          "No audio track found. Choose a tab with audio and enable 'Share audio', or switch to Mic.",
+        );
+      }
+    } else {
+      mediaStreams.push(displayStream);
+    }
+  }
+  if (mediaStreams.length === 0) {
+    throw new Error("No audio source selected.");
+  }
 
   let audioCtx: AudioContext;
   try {
@@ -31,7 +56,7 @@ export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicS
     new URL("./pcm16ResampleWorklet.ts", import.meta.url),
   );
 
-  const source = audioCtx.createMediaStreamSource(mediaStream);
+  const sources = mediaStreams.map((stream) => audioCtx.createMediaStreamSource(stream));
   const worklet = new AudioWorkletNode(audioCtx, "pcm16-resample", {
     processorOptions: { targetSampleRate: targetSampleRateHz },
   });
@@ -59,7 +84,9 @@ export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicS
   const mute = audioCtx.createGain();
   mute.gain.value = 0;
 
-  source.connect(worklet);
+  for (const source of sources) {
+    source.connect(worklet);
+  }
   worklet.connect(mute);
   mute.connect(audioCtx.destination);
 
@@ -68,10 +95,12 @@ export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicS
   const stop = async () => {
     try {
       worklet.port.onmessage = null;
-      try {
-        source.disconnect();
-      } catch {
-        // ignore
+      for (const source of sources) {
+        try {
+          source.disconnect();
+        } catch {
+          // ignore
+        }
       }
       try {
         worklet.disconnect();
@@ -83,7 +112,9 @@ export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicS
       } catch {
         // ignore
       }
-      for (const track of mediaStream.getTracks()) track.stop();
+      for (const stream of mediaStreams) {
+        for (const track of stream.getTracks()) track.stop();
+      }
       await audioCtx.close();
     } catch {
       // best-effort cleanup

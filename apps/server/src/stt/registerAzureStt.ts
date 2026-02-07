@@ -35,6 +35,7 @@ type Entry = {
   latestSeqByTurn: Map<string, number>;
   translateSeq: number;
   finalizedTurns: Set<string>;
+  inFlightTranslateCount: number;
 };
 
 /**
@@ -106,6 +107,7 @@ export function registerAzureStt(ws: WsServerApi) {
       latestSeqByTurn: new Map(),
       translateSeq: 0,
       finalizedTurns: new Set(),
+      inFlightTranslateCount: 0,
     };
     entries.set(sessionId, entry);
     return entry;
@@ -177,11 +179,13 @@ export function registerAzureStt(ws: WsServerApi) {
     const text = evt.text.trim();
     if (!text) return;
     if (evt.kind === "partial" && entry.finalizedTurns.has(evt.turnId)) return;
+    if (evt.kind === "partial" && entry.inFlightTranslateCount > 0) return;
 
     const seq = ++entry.translateSeq;
     entry.latestSeqByTurn.set(evt.turnId, seq);
 
     let result: { translations: Record<string, string>; summary?: string };
+    entry.inFlightTranslateCount += 1;
     try {
       // #region agent log
       debugLog({
@@ -219,6 +223,8 @@ export function registerAzureStt(ws: WsServerApi) {
         recoverable: true,
       });
       return;
+    } finally {
+      entry.inFlightTranslateCount = Math.max(0, entry.inFlightTranslateCount - 1);
     }
 
     if (evt.kind === "partial" && entry.latestSeqByTurn.get(evt.turnId) !== seq) return;

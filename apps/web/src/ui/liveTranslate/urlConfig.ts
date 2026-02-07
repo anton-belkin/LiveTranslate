@@ -8,6 +8,7 @@ export type UrlConfig = {
   showSummary: boolean;
   lean: boolean;
   staticContext?: string;
+  audioSource: "mic" | "tab" | "both";
 };
 
 export function parseUrlConfig(): UrlConfig {
@@ -17,6 +18,7 @@ export function parseUrlConfig(): UrlConfig {
   const showOriginal = parseBoolParam(params.get("showOriginal"), true);
   const showSummary = parseBoolParam(params.get("showSummary"), !lean);
   const staticContext = params.get("staticContext")?.trim() || undefined;
+  const audioSource = parseAudioSourceParam(params.get("audioSource"));
 
   return {
     targetLangs: langs,
@@ -24,6 +26,7 @@ export function parseUrlConfig(): UrlConfig {
     showSummary,
     lean,
     staticContext,
+    audioSource,
   };
 }
 
@@ -51,4 +54,10 @@ function parseBoolParam(value: string | null, fallback: boolean) {
   if (value === "1" || value.toLowerCase() === "true") return true;
   if (value === "0" || value.toLowerCase() === "false") return false;
   return fallback;
+}
+
+function parseAudioSourceParam(value: string | null): "mic" | "tab" | "both" {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "mic" || normalized === "tab" || normalized === "both") return normalized;
+  return "tab";
 }
