@@ -15,6 +15,7 @@ export type GroqTranslateInput = {
   history: TranslationHistoryEntry[];
   summary: string;
   staticContext?: string;
+  previousPartial?: Record<string, string>;
 };
 
 export type GroqTranslateOutput = {
@@ -37,12 +38,19 @@ export async function groqTranslate(
     },
     targetLangs: input.targetLangs,
     history: input.history,
+    previousPartial: input.previousPartial ?? {},
   };
 
   const systemPrompt =
-    "You are a translation engine. Return only valid JSON with keys: " +
+    "You are a translation engine. Input text comes from STT and may be partial or noisy. " +
+    "Return only valid JSON with keys: " +
     "`translations` (map of language code to translated text), " +
     "`sourceLang` (lowercase ISO-639-1 code for the original utterance, e.g. en/de/ru). " +
+    "If `isFinal` is false and the utterance does not look like normal language, " +
+    "return empty `translations` and `sourceLang` as `und`. " +
+    "If `previousPartial` is provided for a target language, keep its beginning the same " +
+    "and append only the new text when meaning can be preserved; if meaning changes, " +
+    "you may rewrite the beginning. " +
     "If `isFinal` is true, also return `summary` in English that rewrites the " +
     "full-meeting summary by compressing the existing `summary` plus the latest `history` " +
     "and current `utterance` into a single coherent summary (do not append). " +

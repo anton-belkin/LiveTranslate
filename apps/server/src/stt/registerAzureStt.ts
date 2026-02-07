@@ -34,6 +34,7 @@ type Entry = {
   summary: string;
   history: TranslationHistoryEntry[];
   revisionByKey: Map<string, number>;
+  partialByKey: Map<string, string>;
   latestSeqByTurn: Map<string, number>;
   translateSeq: number;
   finalizedTurns: Set<string>;
@@ -119,6 +120,7 @@ export function registerAzureStt(ws: WsServerApi) {
       summary: "",
       history: [],
       revisionByKey: new Map(),
+      partialByKey: new Map(),
       latestSeqByTurn: new Map(),
       translateSeq: 0,
       finalizedTurns: new Set(),
@@ -199,6 +201,8 @@ export function registerAzureStt(ws: WsServerApi) {
     const seq = ++entry.translateSeq;
     entry.latestSeqByTurn.set(evt.turnId, seq);
 
+    const previousPartial = buildPreviousPartial(entry, evt.turnId);
+
     let result: { translations: Record<string, string>; summary?: string };
     entry.inFlightTranslateCount += 1;
     try {
@@ -228,6 +232,7 @@ export function registerAzureStt(ws: WsServerApi) {
         history: entry.history.slice(-10),
         summary: entry.summary,
         staticContext: entry.staticContext,
+        previousPartial: evt.kind === "partial" ? previousPartial : {},
       });
     } catch (err) {
       ws.emitToSession(entry.sessionId, {
@@ -276,6 +281,7 @@ export function registerAzureStt(ws: WsServerApi) {
         const revKey = `${evt.turnId}:${key}`;
         const nextRev = (entry.revisionByKey.get(revKey) ?? 0) + 1;
         entry.revisionByKey.set(revKey, nextRev);
+        entry.partialByKey.set(revKey, translated);
         const emitted = ws.emitToSession(entry.sessionId, {
           type: "translate.revise",
           sessionId: entry.sessionId,
@@ -354,6 +360,28 @@ export function registerAzureStt(ws: WsServerApi) {
         });
         // #endregion
       }
+    }
+
+    if (evt.kind === "final") {
+      clearTurnPartials(entry, evt.turnId);
+    }
+  }
+
+  function buildPreviousPartial(entry: Entry, turnId: string): Record<string, string> {
+    const result: Record<string, string> = {};
+    for (const lang of entry.targetLangs) {
+      const key = lang.toLowerCase();
+      const existing = entry.partialByKey.get(`${turnId}:${key}`);
+      if (existing && existing.trim().length > 0) {
+        result[key] = existing;
+      }
+    }
+    return result;
+  }
+
+  function clearTurnPartials(entry: Entry, turnId: string) {
+    for (const lang of entry.targetLangs) {
+      entry.partialByKey.delete(`${turnId}:${lang.toLowerCase()}`);
     }
   }
 }
