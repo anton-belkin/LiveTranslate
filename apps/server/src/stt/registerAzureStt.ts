@@ -6,6 +6,7 @@ import { loadAzureSpeechConfig } from "./azure/config.js";
 import { loadGroqConfig } from "../translate/groq/config.js";
 import {
   groqTranslate,
+  type GroqTranslateOutput,
   type TranslationHistoryEntry,
 } from "../translate/groq/groqTranslate.js";
 
@@ -84,6 +85,20 @@ export function registerAzureStt(ws: WsServerApi) {
     if (existing) return existing;
 
     let entry: Entry;
+    debugLog({
+      location: "registerAzureStt.ts:ensureEntry",
+      message: "initializing azure stt adapter",
+      data: {
+        sessionId,
+        specialWords: hello.specialWords ?? [],
+        specialWordsCount: hello.specialWords?.length ?? 0,
+        specialWordsBoostIgnored: hello.specialWordsBoost ?? null,
+      },
+      timestamp: Date.now(),
+      sessionId: "debug-session",
+      runId: "run1",
+      hypothesisId: "H4",
+    });
     const adapter = new AzureSpeechSttAdapter({
       sessionId,
       config,
@@ -203,7 +218,7 @@ export function registerAzureStt(ws: WsServerApi) {
 
     const previousPartial = buildPreviousPartial(entry, evt.turnId);
 
-    let result: { translations: Record<string, string>; summary?: string };
+    let result: GroqTranslateOutput;
     entry.inFlightTranslateCount += 1;
     try {
       // #region agent log

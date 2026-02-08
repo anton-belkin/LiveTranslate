@@ -48,9 +48,12 @@ export async function groqTranslate(
     "`sourceLang` (lowercase ISO-639-1 code for the original utterance, e.g. en/de/ru). " +
     "If `isFinal` is false and the utterance does not look like normal language, " +
     "return empty `translations` and `sourceLang` as `und`. " +
+    "When `isFinal` is false, add appropriate punctuation and capitalization to the translation " +
+    "so it reads like well-formed partial text, even if the STT input lacks punctuation. " +
     "If `previousPartial` is provided for a target language, keep its beginning the same " +
     "and append only the new text when meaning can be preserved; if meaning changes, " +
-    "you may rewrite the beginning. " +
+    "you may rewrite the beginning. If the ending of the partial is ambiguous, " +
+    "you may hold back translating that uncertain tail until a more complete partial arrives. " +
     "If `isFinal` is true, also return `summary` in English that rewrites the " +
     "full-meeting summary by compressing the existing `summary` plus the latest `history` " +
     "and current `utterance` into a single coherent summary (do not append). " +

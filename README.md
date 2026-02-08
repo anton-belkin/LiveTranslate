@@ -29,6 +29,11 @@ Or run both (pnpm will run `dev` in all apps):
 pnpm dev
 ```
 
+## Lesson learned: shared dist must be fresh
+`apps/web` and `apps/server` consume `packages/shared` from `dist/`. If that build is stale,
+fields like `specialWords` can get dropped by the server schema. During dev, always run the
+shared watch build (included in `pnpm dev`) so `packages/shared/dist` stays current.
+
 ## Audio capture caveat (pure web app)
 This PoC starts with **microphone capture** (works even for Zoom/Teams desktop apps):
 - It will prompt for mic permission (`getUserMedia({ audio: true })`).

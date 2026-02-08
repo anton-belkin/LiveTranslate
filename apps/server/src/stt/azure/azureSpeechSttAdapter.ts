@@ -136,6 +136,9 @@ export class AzureSpeechSttAdapter {
         targetSampleRateHz: this.targetSampleRateHz,
         endpoint: sttEndpoint.toString(),
         languageIdMode: "Continuous",
+        specialWords: this.specialWords,
+        specialWordsCount: this.specialWords.length,
+        specialWordsBoostIgnored: this.specialWordsBoost,
       },
       timestamp: Date.now(),
       sessionId: "debug-session",
@@ -310,19 +313,21 @@ export class AzureSpeechSttAdapter {
   }
 
   private applyPhraseList(recognizer: sdk.SpeechRecognizer) {
-    if (this.specialWords.length === 0 || this.specialWordsBoost <= 0) return;
+    if (this.specialWords.length === 0) return;
     try {
       const phraseList = sdk.PhraseListGrammar.fromRecognizer(recognizer);
-      for (let i = 0; i < this.specialWordsBoost; i += 1) {
-        for (const word of this.specialWords) {
-          phraseList.addPhrase(word);
-        }
+      for (const word of this.specialWords) {
+        phraseList.addPhrase(word);
       }
       // #region agent log
       debugLog({
         location: "azureSpeechSttAdapter.ts:applyPhraseList",
         message: "phrase list applied",
-        data: { count: this.specialWords.length, boost: this.specialWordsBoost },
+        data: {
+          count: this.specialWords.length,
+          words: this.specialWords,
+          boostIgnored: this.specialWordsBoost,
+        },
         timestamp: Date.now(),
         sessionId: "debug-session",
         runId: "run1",

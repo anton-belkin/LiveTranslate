@@ -191,9 +191,8 @@ export function useLiveTranslateStream({
 
     socket.onopen = () => {
       dispatch({ type: "connection.update", status: "open" });
-      socket.send(
-        JSON.stringify(makeHello({ targetLangs, staticContext, specialWords, specialWordsBoost })),
-      );
+      const hello = makeHello({ targetLangs, staticContext, specialWords, specialWordsBoost });
+      socket.send(JSON.stringify(hello));
     };
 
     socket.onmessage = (ev) => {
