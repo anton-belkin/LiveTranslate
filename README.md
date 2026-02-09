@@ -29,6 +29,40 @@ Or run both (pnpm will run `dev` in all apps):
 pnpm dev
 ```
 
+## Desktop app (Electron)
+The repo also includes an Electron desktop wrapper under `apps/desktop` that:
+- Loads the same Vite UI (`apps/web`)
+- Spawns the same Node WS server (`apps/server`) as a managed child process
+- Stores API keys in the OS credential store (Keychain / Credential Manager)
+
+### Run desktop (dev)
+In one terminal:
+```bash
+pnpm -C apps/web dev
+```
+
+In another terminal:
+```bash
+pnpm -C apps/desktop dev
+```
+
+Use the **API keys** button in the UI to enter Groq + Azure keys (the backend will restart).
+
+### Package desktop
+Unpacked (local smoke test):
+```bash
+pnpm -C apps/desktop run package:dir
+```
+
+Installer artifacts:
+```bash
+pnpm -C apps/desktop run package
+```
+
+### Permissions notes (macOS)
+- Screen capture audio uses `getDisplayMedia({ audio: true, video: true })` and requires **Screen Recording** permission.
+- Microphone capture requires **Microphone** permission.
+
 ## Lesson learned: shared dist must be fresh
 `apps/web` and `apps/server` consume `packages/shared` from `dist/`. If that build is stale,
 fields like `specialWords` can get dropped by the server schema. During dev, always run the

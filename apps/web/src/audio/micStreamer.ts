@@ -52,9 +52,68 @@ export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicS
     // Some browsers may reject non-default sampleRate; we resample in the worklet anyway.
     audioCtx = new AudioContext();
   }
-  await audioCtx.audioWorklet.addModule(
-    new URL("./pcm16ResampleWorklet.ts", import.meta.url),
-  );
+  // Use Vite's ?url to force a file-based asset (avoids data: URLs in production).
+  const resolvedWorkletUrl = new URL(
+    "./pcm16ResampleWorklet.ts?url",
+    import.meta.url,
+  ).toString();
+  // #region agent log
+  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      runId: "pre-fix",
+      hypothesisId: "E",
+      location: "apps/web/src/audio/micStreamer.ts",
+      message: "audioWorklet.addModule start",
+      data: {
+        windowHref: typeof window !== "undefined" ? window.location.href : null,
+        importMetaUrl: import.meta.url,
+        resolvedWorkletUrl,
+        audioCtxSampleRate: audioCtx.sampleRate,
+        requestedTargetSampleRateHz: targetSampleRateHz
+      },
+      timestamp: Date.now()
+    })
+  }).catch(() => {});
+  // #endregion
+  try {
+    await audioCtx.audioWorklet.addModule(resolvedWorkletUrl);
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: "pre-fix",
+        hypothesisId: "E",
+        location: "apps/web/src/audio/micStreamer.ts",
+        message: "audioWorklet.addModule ok",
+        data: { resolvedWorkletUrl },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
+  } catch (err) {
+    // #region agent log
+    fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: "pre-fix",
+        hypothesisId: "F",
+        location: "apps/web/src/audio/micStreamer.ts",
+        message: "audioWorklet.addModule error",
+        data: {
+          resolvedWorkletUrl,
+          name: (err as Error | undefined)?.name ?? "unknown",
+          message: String(err)
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
+    throw err;
+  }
 
   const sources = mediaStreams.map((stream) => audioCtx.createMediaStreamSource(stream));
   const worklet = new AudioWorkletNode(audioCtx, "pcm16-resample", {

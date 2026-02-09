@@ -225,14 +225,15 @@ export function useLiveTranslateStream({
         data: {
           type: res.data.type,
           hasText:
-            "text" in res.data && typeof (res.data as { text?: string }).text === "string"
-              ? (res.data as { text?: string }).text.length
-              : undefined,
+            (() => {
+              const t = (res.data as { text?: unknown }).text;
+              return typeof t === "string" ? t.length : undefined;
+            })(),
           hasDelta:
-            "textDelta" in res.data &&
-            typeof (res.data as { textDelta?: string }).textDelta === "string"
-              ? (res.data as { textDelta?: string }).textDelta.length
-              : undefined,
+            (() => {
+              const d = (res.data as { textDelta?: unknown }).textDelta;
+              return typeof d === "string" ? d.length : undefined;
+            })(),
           lang: "lang" in res.data ? (res.data as { lang?: string }).lang : undefined,
           from: "from" in res.data ? (res.data as { from?: string }).from : undefined,
           to: "to" in res.data ? (res.data as { to?: string }).to : undefined,

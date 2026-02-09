@@ -4,6 +4,7 @@ import { TranscriptView } from "./liveTranslate/TranscriptView";
 import { makeInitialState, transcriptReducer } from "./liveTranslate/store";
 import { useLiveTranslateStream } from "./liveTranslate/useLiveTranslateStream";
 import { parseUrlConfig, updateUrlParam } from "./liveTranslate/urlConfig";
+import { DesktopKeysModal } from "./DesktopKeysModal";
 
 export function App() {
   const [state, dispatch] = useReducer(transcriptReducer, undefined, makeInitialState);
@@ -16,8 +17,22 @@ export function App() {
     urlConfig.specialWordsBoost ?? 1,
   );
   const [showContextPopover, setShowContextPopover] = useState(false);
+  const [showKeysModal, setShowKeysModal] = useState(false);
   const [audioSource, setAudioSource] = useState(urlConfig.audioSource);
   const isLean = urlConfig.lean;
+
+  const hasDesktopBridge = useMemo(
+    () => typeof window !== "undefined" && typeof window.livetranslateDesktop === "object",
+    [],
+  );
+
+  useEffect(() => {
+    if (!hasDesktopBridge) return;
+    void window.livetranslateDesktop
+      ?.getWsUrl()
+      .then((url) => dispatch({ type: "url.set", url }))
+      .catch(() => {});
+  }, [hasDesktopBridge]);
 
   useEffect(() => {
     updateUrlParam("showOriginal", showOriginal ? "1" : "0");
@@ -200,9 +215,16 @@ export function App() {
                 </div>
               ) : null}
             </div>
+            {hasDesktopBridge ? (
+              <button className="btn btnSmall" onClick={() => setShowKeysModal(true)}>
+                API keys
+              </button>
+            ) : null}
             {state.lastSocketError ? <span className="pill">{state.lastSocketError}</span> : null}
           </div>
         )}
+
+        <DesktopKeysModal open={showKeysModal} onClose={() => setShowKeysModal(false)} />
 
         <TranscriptView
           state={state}

@@ -1,0 +1,52 @@
+{
+  "name": "@livetranslate/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc -p tsconfig.json",
+    "start": "electron dist/main.js",
+    "prepare:resources": "node scripts/prepare-resources.mjs",
+    "package:dir": "pnpm prepare:resources && electron-builder --dir --publish never",
+    "package": "pnpm prepare:resources && electron-builder --publish never",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "^37.0.0",
+    "electron-builder": "^26.7.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@livetranslate/shared": "workspace:^",
+    "dotenv": "^17.0.0",
+    "keytar": "^7.9.0",
+    "microsoft-cognitiveservices-speech-sdk": "^1.47.0",
+    "ws": "^8.18.0"
+  },
+  "build": {
+    "appId": "com.livetranslate.desktop",
+    "productName": "LiveTranslate",
+    "asar": true,
+    "files": [
+      "dist/**",
+      "app-resources/**",
+      "preload.cjs",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}

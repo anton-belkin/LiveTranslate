@@ -146,6 +146,65 @@
   font-size: 12px;
 }
 
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.modalPanel {
+  width: 720px;
+  max-width: 96vw;
+  padding: 14px;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.modalTitle {
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(229, 231, 235, 0.92);
+}
+
+.modalSub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(229, 231, 235, 0.68);
+}
+
+.modalGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.modalFooter {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.modalSpacer {
+  flex: 1;
+}
+
+.modalError {
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
