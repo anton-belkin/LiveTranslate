@@ -19,6 +19,36 @@ sequenceDiagram
   Server-->>Browser: translate.revise/translate.final + summary.update
 ```
 
+## Deployment topology (Docker + Tailscale Funnel)
+
+```mermaid
+sequenceDiagram
+  participant User as Public_User
+  participant Funnel as Tailscale_Funnel
+  participant Auth as OAuth2_Proxy
+  participant Caddy as Caddy_Static_Proxy
+  participant WS as WS_Server
+  participant STT as Cloud_STT
+  participant LLM as Groq_Translate_LLM
+
+  User->>Funnel: HTTPS request
+  Funnel->>Auth: proxy to oauth2-proxy (4180)
+  Auth-->>User: Google SSO (if not authenticated)
+  Auth->>Caddy: proxy "/" and assets
+  Caddy->>User: static web app
+  User->>Auth: WSS /ws
+  Auth->>Caddy: proxy /ws
+  Caddy->>WS: WebSocket upgrade (8787)
+  WS->>STT: stream audio
+  WS->>LLM: translate + summary
+  WS-->>User: WS messages (stt/translate/summary)
+```
+
+Notes:
+- `oauth2-proxy` enforces Google SSO + email allowlist.
+- Tailscale Funnel terminates public HTTPS and forwards to the oauth2-proxy service.
+- Web assets are served by Caddy; WS traffic is proxied to the Node server.
+
 ## Design invariants
 - **Contracts-first**: `packages/shared` is the source of truth.
 - **Low latency**: show `stt.partial` quickly; translation streams as available.

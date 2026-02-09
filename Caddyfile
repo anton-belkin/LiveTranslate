@@ -1,0 +1,21 @@
+:80 {
+  encode gzip
+
+  @ws path /ws* header Connection *Upgrade* header Upgrade websocket
+  handle @ws {
+    reverse_proxy server:8787 {
+      transport http {
+        versions h1
+      }
+    }
+  }
+
+  @worklet path /assets/*.js
+  header @worklet Content-Type "application/javascript"
+
+  handle {
+    root * /srv
+    try_files {path} /index.html
+    file_server
+  }
+}

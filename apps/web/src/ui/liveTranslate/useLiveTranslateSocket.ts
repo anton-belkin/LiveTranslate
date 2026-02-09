@@ -98,7 +98,7 @@ export function useLiveTranslateSocket({
       onSocketStatus("error", "WebSocket error.");
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
       if (closedByCleanup) return;
       onSocketStatus("closed");
     };

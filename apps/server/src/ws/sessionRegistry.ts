@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import type { AudioFrame, ClientHello } from "@livetranslate/shared";
-import type { AudioFrameConsumer, Session } from "./types.js";
+import type { AudioFrameConsumer, Session, SessionAuth } from "./types.js";
 
 /**
  * Backpressure policy (documented requirement):
@@ -26,7 +26,7 @@ type SessionInternal = Session & {
 };
 
 export type SessionRegistry = {
-  createNewSession: (socket: WebSocket, hello: ClientHello) => Session;
+  createNewSession: (socket: WebSocket, hello: ClientHello, auth?: SessionAuth) => Session;
   getSession: (sessionId: string) => Session | undefined;
   attachSocket: (sessionId: string, socket: WebSocket) => Session | undefined;
   markDisconnected: (sessionId: string) => void;
@@ -69,13 +69,14 @@ export function createSessionRegistry(args: {
     }
   }
 
-  function createNewSession(socket: WebSocket, hello: ClientHello): Session {
+  function createNewSession(socket: WebSocket, hello: ClientHello, auth?: SessionAuth): Session {
     const id = randomUUID();
     const session: SessionInternal = {
       id,
       status: "connected",
       socket,
       hello,
+      auth,
       queuedFrames: 0,
       _queue: [],
       _draining: false,

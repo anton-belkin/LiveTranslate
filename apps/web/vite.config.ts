@@ -12,6 +12,10 @@ export default defineConfig({
       ),
     },
   },
+  build: {
+    // Ensure AudioWorklet module is emitted as a real file (not data URL).
+    assetsInlineLimit: 0,
+  },
   server: {
     port: 5173,
   },

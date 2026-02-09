@@ -5,17 +5,7 @@ import type { Lang } from "@livetranslate/shared";
 import type { TranscriptState, Turn } from "./store";
 
 const PAUSE_GAP_MS = 900;
-const DEBUG_LOGS = import.meta.env.VITE_DEBUG_LOGS === "true";
 const LEAN_MAX_ROWS = 200;
-
-function debugLog(payload: Record<string, unknown>) {
-  if (!DEBUG_LOGS) return;
-  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  }).catch(() => {});
-}
 
 type BubbleGroup = {
   groupId: string;
@@ -241,26 +231,6 @@ export function TranscriptView({
     if (rows.length <= LEAN_MAX_ROWS) return rows;
     return rows.slice(rows.length - LEAN_MAX_ROWS);
   }, [lean, rows]);
-
-  // #region agent log
-  useEffect(() => {
-    const latest = rows[rows.length - 1];
-    const firstTranslation = latest?.translations.values().next().value;
-    debugLog({
-      location: "TranscriptView.tsx:rows",
-      message: "rows recomputed",
-      data: {
-        rowsCount: rows.length,
-        originalLen: latest?.originalText?.length ?? 0,
-        translationLen: firstTranslation?.parts?.join(" ").length ?? 0,
-      },
-      timestamp: Date.now(),
-      sessionId: "debug-session",
-      runId: "run1",
-      hypothesisId: "H2",
-    });
-  }, [rows]);
-  // #endregion
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const prevCountRef = useRef(0);

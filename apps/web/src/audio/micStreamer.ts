@@ -16,6 +16,8 @@ export type MicStreamerHandle = {
   stop: () => Promise<void>;
 };
 
+import workletModuleUrl from "./pcm16ResampleWorklet.js?url";
+
 export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicStreamerHandle> {
   const targetSampleRateHz = opts.targetSampleRateHz ?? 16000;
 
@@ -52,9 +54,18 @@ export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicS
     // Some browsers may reject non-default sampleRate; we resample in the worklet anyway.
     audioCtx = new AudioContext();
   }
-  await audioCtx.audioWorklet.addModule(
-    new URL("./pcm16ResampleWorklet.ts", import.meta.url),
-  );
+  const workletUrl = workletModuleUrl;
+  try {
+    const res = await fetch(workletUrl, { credentials: "include" });
+    void res;
+  } catch (err) {
+    void err;
+  }
+  try {
+    await audioCtx.audioWorklet.addModule(workletUrl);
+  } catch (err) {
+    throw err;
+  }
 
   const sources = mediaStreams.map((stream) => audioCtx.createMediaStreamSource(stream));
   const worklet = new AudioWorkletNode(audioCtx, "pcm16-resample", {

@@ -1,0 +1,70 @@
+services:
+  server:
+    build:
+      context: .
+      target: server
+    environment:
+      PORT: "8787"
+    env_file:
+      - ./.env
+    expose:
+      - "8787"
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.0
+    environment:
+      OAUTH2_PROXY_PROVIDER: "google"
+      OAUTH2_PROXY_SCOPE: "openid email profile"
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+      OAUTH2_PROXY_UPSTREAMS: "http://caddy:80/"
+      OAUTH2_PROXY_PROXY_WEBSOCKETS: "true"
+      OAUTH2_PROXY_CLIENT_ID: ${OAUTH2_PROXY_CLIENT_ID}
+      OAUTH2_PROXY_CLIENT_SECRET: ${OAUTH2_PROXY_CLIENT_SECRET}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET}
+      OAUTH2_PROXY_COOKIE_DOMAINS: ${OAUTH2_PROXY_COOKIE_DOMAINS}
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_COOKIE_SAMESITE: "lax"
+      OAUTH2_PROXY_AUTHENTICATED_EMAILS_FILE: /etc/oauth2-proxy/emails.yaml
+      OAUTH2_PROXY_REDIRECT_URL: ${OAUTH2_PROXY_REDIRECT_URL}
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_REVERSE_PROXY: "true"
+      OAUTH2_PROXY_SKIP_AUTH_ROUTES: "^/assets/.*|^/favicon\\.ico$${OAUTH2_PROXY_SKIP_AUTH_ROUTES_EXTRA:-}"
+    volumes:
+      - ./ops/oauth2-proxy/emails.yaml:/etc/oauth2-proxy/emails.yaml:ro
+    expose:
+      - "4180"
+
+  caddy:
+    build:
+      context: .
+      target: web
+    depends_on:
+      - server
+      - oauth2-proxy
+    expose:
+      - "80"
+
+  tailscale:
+    image: tailscale/tailscale:v1.82.0
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_HOSTNAME: ${TS_HOSTNAME:-livetranslate}
+      TS_SERVE_PORT: "80"
+      TS_SERVE_TARGET: "http://127.0.0.1:4180"
+      TS_FUNNEL: "true"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./ops/tailscale/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/entrypoint.sh"]
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - oauth2-proxy
+    network_mode: "service:oauth2-proxy"
+
+volumes:
+  tailscale-state:

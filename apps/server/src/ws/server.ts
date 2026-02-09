@@ -9,18 +9,7 @@ import {
   type ServerToClientMessage,
 } from "@livetranslate/shared";
 import { createSessionRegistry } from "./sessionRegistry.js";
-import type { AudioFrameConsumer, Session, SessionStopConsumer } from "./types.js";
-
-const DEBUG_LOGS = process.env.LIVETRANSLATE_DEBUG_LOGS === "true";
-
-function debugLog(payload: Record<string, unknown>) {
-  if (!DEBUG_LOGS) return;
-  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  }).catch(() => {});
-}
+import type { AudioFrameConsumer, Session, SessionAuth, SessionStopConsumer } from "./types.js";
 
 function safeJsonParse(input: string): { ok: true; value: unknown } | { ok: false } {
   try {
@@ -36,6 +25,20 @@ function toText(data: WebSocket.RawData): string | null {
   if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
   if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
   return null;
+}
+
+function getHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+function getAuthFromRequest(req: http.IncomingMessage): SessionAuth | undefined {
+  const email = getHeaderValue(req.headers["x-auth-request-email"]);
+  const user = getHeaderValue(req.headers["x-auth-request-user"]);
+  const preferredUsername = getHeaderValue(req.headers["x-auth-request-preferred-username"]);
+  if (!email && !user && !preferredUsername) return undefined;
+  return { email, user, preferredUsername };
 }
 
 export type WsServerApi = {
@@ -70,58 +73,15 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
   function emitToSocket(socket: WebSocket, msg: ServerToClientMessage) {
     const parsed = safeParseServerMessage(msg);
     if (!parsed.success) {
-      // #region agent log
-      debugLog({
-        location: "server.ts:emitToSocket",
-        message: "server msg failed schema",
-        data: {
-          type: (msg as { type?: string }).type ?? null,
-          issueCount: parsed.error.issues.length,
-          issues: parsed.error.issues.map((issue) => ({
-            path: issue.path,
-            code: issue.code,
-            message: issue.message,
-            expected: issue.expected,
-            received: issue.received,
-          })),
-        },
-        timestamp: Date.now(),
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "H4",
-      });
-      // #endregion
       return false;
     }
     if (socket.readyState !== WebSocket.OPEN) {
-      // #region agent log
-      debugLog({
-        location: "server.ts:emitToSocket",
-        message: "socket not open",
-        data: { type: parsed.data.type, readyState: socket.readyState },
-        timestamp: Date.now(),
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "H4",
-      });
-      // #endregion
       return false;
     }
     try {
       socket.send(JSON.stringify(msg));
       return true;
     } catch {
-      // #region agent log
-      debugLog({
-        location: "server.ts:emitToSocket",
-        message: "socket.send threw",
-        data: { type: parsed.data.type },
-        timestamp: Date.now(),
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "H4",
-      });
-      // #endregion
       return false;
     }
   }
@@ -157,8 +117,8 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
     );
   }
 
-  function handleHello(socket: WebSocket, msg: ClientHello): Session {
-    const session = registry.createNewSession(socket, msg);
+  function handleHello(socket: WebSocket, msg: ClientHello, auth?: SessionAuth): Session {
+    const session = registry.createNewSession(socket, msg, auth);
     emitToSocket(socket, {
       type: "server.ready",
       protocolVersion: PROTOCOL_VERSION,
@@ -168,9 +128,12 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
     return session;
   }
 
-  function tryResumeSession(args: { socket: WebSocket; sessionId: string }) {
+  function tryResumeSession(args: { socket: WebSocket; sessionId: string; auth?: SessionAuth }) {
     const existing = registry.attachSocket(args.sessionId, args.socket);
     if (!existing) return undefined;
+    if (args.auth && !existing.auth) {
+      existing.auth = args.auth;
+    }
     emitToSocket(args.socket, {
       type: "server.ready",
       protocolVersion: PROTOCOL_VERSION,
@@ -180,7 +143,8 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
     return existing;
   }
 
-  wss.on("connection", (socket) => {
+  wss.on("connection", (socket, req) => {
+    const auth = req ? getAuthFromRequest(req) : undefined;
     let helloReceived = false;
     let issuedSessionId: string | null = null;
     let boundSessionId: string | null = null;
@@ -212,7 +176,7 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
           return;
         }
         helloReceived = true;
-        const session = handleHello(socket, msg);
+        const session = handleHello(socket, msg, auth);
         issuedSessionId = session.id;
         boundSessionId = session.id;
         return;
@@ -240,27 +204,12 @@ export function createWsServer(args: { server: http.Server }): WsServerApi {
 
       if (!firstAudioFrameBySession.has(frame.sessionId)) {
         firstAudioFrameBySession.add(frame.sessionId);
-        // #region agent log
-        debugLog({
-          location: "server.ts:audio.frame",
-          message: "first audio frame received",
-          data: {
-            sessionId: frame.sessionId,
-            sampleRateHz: frame.sampleRateHz,
-            bytes: frame.pcm16Base64.length,
-          },
-          timestamp: Date.now(),
-          sessionId: "debug-session",
-          runId: "run1",
-          hypothesisId: "H2",
-        });
-        // #endregion
       }
 
       // Reconnect handling: allow clients to resume by sending audio.frame with a
       // previously issued sessionId, even if this connection was just created.
       if (boundSessionId !== frame.sessionId) {
-        const resumed = tryResumeSession({ socket, sessionId: frame.sessionId });
+        const resumed = tryResumeSession({ socket, sessionId: frame.sessionId, auth });
         if (resumed) {
           if (issuedSessionId && issuedSessionId !== resumed.id) {
             // Avoid leaking the just-created session when the client resumes an older one.

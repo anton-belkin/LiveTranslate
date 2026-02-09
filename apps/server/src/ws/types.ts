@@ -3,11 +3,18 @@ import type WebSocket from "ws";
 
 export type SessionStatus = "connected" | "disconnected" | "stopped";
 
+export type SessionAuth = {
+  email?: string;
+  user?: string;
+  preferredUsername?: string;
+};
+
 export type Session = {
   id: string;
   status: SessionStatus;
   socket: WebSocket | null;
   hello: ClientHello;
+  auth?: SessionAuth;
   /**
    * Async ingestion queue length in frames (not bytes).
    * See `BACKPRESSURE_POLICY` in `sessionRegistry.ts`.

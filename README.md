@@ -29,6 +29,22 @@ Or run both (pnpm will run `dev` in all apps):
 pnpm dev
 ```
 
+## Run with Docker + Tailscale Funnel
+The containerized stack uses:
+- `oauth2-proxy` for Google SSO + email allowlist
+- `caddy` to serve the web app and proxy `/ws`
+- `server` for WebSocket + STT/translation
+- `tailscale` sidecar to expose the stack via Funnel
+
+Follow the deployment guide:
+- `docs/deploy-nas.md`
+
+Quick start (after configuring `.env` and `ops/oauth2-proxy/emails.yaml`):
+```bash
+docker compose build
+docker compose up -d
+```
+
 ## Lesson learned: shared dist must be fresh
 `apps/web` and `apps/server` consume `packages/shared` from `dist/`. If that build is stale,
 fields like `specialWords` can get dropped by the server schema. During dev, always run the

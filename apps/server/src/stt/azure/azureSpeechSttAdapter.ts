@@ -28,17 +28,6 @@ type AdapterState = "idle" | "starting" | "open" | "stopping" | "stopped";
 
 const DEFAULT_TARGET_SAMPLE_RATE_HZ = 16_000;
 const SPEAKER_RECENT_MS = 3000;
-const DEBUG_LOGS = process.env.LIVETRANSLATE_DEBUG_LOGS === "true";
-
-function debugLog(payload: Record<string, unknown>) {
-  if (!DEBUG_LOGS) return;
-  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  }).catch(() => {});
-}
-
 function toMs(ticks?: number) {
   if (!Number.isFinite(ticks)) return undefined;
   return Math.max(0, Math.floor((ticks ?? 0) / 10_000));
@@ -126,26 +115,7 @@ export class AzureSpeechSttAdapter {
       this.config.autoDetectLanguages,
     );
     const sttEndpoint = this.getSttEndpointUrl();
-    // #region agent log
-    debugLog({
-      location: "azureSpeechSttAdapter.ts:start",
-      message: "starting azure recognizer",
-      data: {
-        autoDetectLanguages: this.config.autoDetectLanguages,
-        primaryLang: this.config.autoDetectLanguages[0] ?? null,
-        targetSampleRateHz: this.targetSampleRateHz,
-        endpoint: sttEndpoint.toString(),
-        languageIdMode: "Continuous",
-        specialWords: this.specialWords,
-        specialWordsCount: this.specialWords.length,
-        specialWordsBoostIgnored: this.specialWordsBoost,
-      },
-      timestamp: Date.now(),
-      sessionId: "debug-session",
-      runId: "run1",
-      hypothesisId: "H1",
-    });
-    // #endregion
+    void sttEndpoint;
 
     this.sttStream = stream;
     this.recognizer = sdk.SpeechRecognizer.FromConfig(
@@ -319,33 +289,8 @@ export class AzureSpeechSttAdapter {
       for (const word of this.specialWords) {
         phraseList.addPhrase(word);
       }
-      // #region agent log
-      debugLog({
-        location: "azureSpeechSttAdapter.ts:applyPhraseList",
-        message: "phrase list applied",
-        data: {
-          count: this.specialWords.length,
-          words: this.specialWords,
-          boostIgnored: this.specialWordsBoost,
-        },
-        timestamp: Date.now(),
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "H4",
-      });
-      // #endregion
     } catch (err) {
-      // #region agent log
-      debugLog({
-        location: "azureSpeechSttAdapter.ts:applyPhraseList",
-        message: "phrase list failed",
-        data: { error: String(err) },
-        timestamp: Date.now(),
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "H4",
-      });
-      // #endregion
+      void err;
     }
   }
 
@@ -407,27 +352,6 @@ export class AzureSpeechSttAdapter {
       const detected = this.resolveFromLang(result);
       const from = detected ?? this.lastFinalLang;
       if (detected) this.lastFinalLang = detected;
-
-      // #region agent log
-      debugLog({
-        location: "azureSpeechSttAdapter.ts:recognized",
-        message: "recognized speech result",
-        data: {
-          turnId,
-          textLength: text.length,
-          from: from ?? null,
-          detected: detected ?? null,
-          lastFinalLang: this.lastFinalLang ?? null,
-          lastPartialLang: this.lastPartialLang ?? null,
-          startMs,
-          endMs,
-        },
-        timestamp: Date.now(),
-        sessionId: "debug-session",
-        runId: "run1",
-        hypothesisId: "H2",
-      });
-      // #endregion
 
       this.emit({
         type: "stt.final",
@@ -547,23 +471,6 @@ export class AzureSpeechSttAdapter {
       detected = toLang(resultLang);
     }
 
-    // #region agent log
-    debugLog({
-      location: "azureSpeechSttAdapter.ts:resolveFromLang",
-      message: "resolved speech language",
-      data: {
-        propertyLang: propertyLang ?? null,
-        autoLang: autoLang ?? null,
-        resultLang: resultLang ?? null,
-        detected: detected ?? null,
-        lastFinalLang: this.lastFinalLang ?? null,
-      },
-      timestamp: Date.now(),
-      sessionId: "debug-session",
-      runId: "run1",
-      hypothesisId: "H3",
-    });
-    // #endregion
     return detected;
   }
 
@@ -663,17 +570,6 @@ export class AzureSpeechSttAdapter {
     this.currentSpeakerId = undefined;
     this.lastPartialText = "";
     this.lastPartialLang = undefined;
-    // #region agent log
-    debugLog({
-      location: "azureSpeechSttAdapter.ts:resetTurnState",
-      message: "reset turn state",
-      data: {},
-      timestamp: Date.now(),
-      sessionId: "debug-session",
-      runId: "run1",
-      hypothesisId: "H2",
-    });
-    // #endregion
   }
 
   private handleStartError(err: unknown) {

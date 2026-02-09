@@ -2,17 +2,6 @@ import type { Lang, ServerToClientMessage } from "@livetranslate/shared";
 import { PROTOCOL_VERSION } from "@livetranslate/shared";
 import { parseUrlConfig } from "./urlConfig";
 
-const DEBUG_LOGS = import.meta.env.VITE_DEBUG_LOGS === "true";
-
-function debugLog(payload: Record<string, unknown>) {
-  if (!DEBUG_LOGS) return;
-  fetch("http://127.0.0.1:7242/ingest/8fd36b07-294f-4ce9-ac11-4c200acb96eb", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  }).catch(() => {});
-}
-
 export type ConnectionStatus =
   | "idle"
   | "connecting"
@@ -83,7 +72,17 @@ export const DEFAULT_WS_URL = "ws://localhost:8787";
 
 function getDefaultWsUrl() {
   const fromEnv = import.meta.env.VITE_WS_URL;
-  return typeof fromEnv === "string" && fromEnv.length > 0 ? fromEnv : DEFAULT_WS_URL;
+  if (typeof fromEnv === "string" && fromEnv.length > 0) return fromEnv;
+  if (typeof window !== "undefined" && window.location) {
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      const devUrl = "ws://localhost:8787";
+      return devUrl;
+    }
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const computedUrl = `${wsProtocol}//${window.location.host}/ws`;
+    return computedUrl;
+  }
+  return DEFAULT_WS_URL;
 }
 
 export function makeInitialState(): TranscriptState {
@@ -289,19 +288,6 @@ export function transcriptReducer(
 
       if (msg.type === "stt.partial" || msg.type === "stt.final") {
         const lang: Lang | undefined = msg.lang;
-        if (msg.type === "stt.final") {
-          // #region agent log
-          debugLog({
-            location: "store.ts:sttFinal",
-            message: "received stt.final",
-            data: { turnId: msg.turnId, lang: lang ?? null, textLen: msg.text.length },
-            timestamp: Date.now(),
-            sessionId: "debug-session",
-            runId: "run1",
-            hypothesisId: "H3",
-          });
-          // #endregion
-        }
         const nextState = ensureTurn(state, msg.turnId, {
           sessionId: msg.sessionId,
           startMs: state.turnsById[msg.turnId]?.startMs ?? msg.startMs,
@@ -465,17 +451,6 @@ export function transcriptReducer(
 
       if (msg.type === "summary.update") {
         if (msg.summary === state.summary) return state;
-        // #region agent log
-        debugLog({
-          location: "store.ts:summaryUpdate",
-          message: "summary.update applied",
-          data: { prevLen: state.summary?.length ?? 0, nextLen: msg.summary.length },
-          timestamp: Date.now(),
-          sessionId: "debug-session",
-          runId: "run1",
-          hypothesisId: "H2",
-        });
-        // #endregion
         return { ...state, summary: msg.summary };
       }
 

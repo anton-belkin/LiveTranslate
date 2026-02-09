@@ -5,28 +5,21 @@
  * Posts messages: `{ type: "pcm16.frame", pcm16: ArrayBuffer, sampleRateHz: number, channels: 1 }`
  */
 
-type FrameMessage = {
-  type: "pcm16.frame";
-  pcm16: ArrayBuffer;
-  sampleRateHz: number;
-  channels: 1;
-};
-
 class Pcm16ResampleProcessor extends AudioWorkletProcessor {
-  private readonly inputSampleRate: number;
-  private readonly outputSampleRate: number;
-  private readonly ratio: number; // input / output
+  inputSampleRate;
+  outputSampleRate;
+  ratio; // input / output
 
-  private readonly frameSamples: number;
-  private resamplePos = 0; // in input sample units
+  frameSamples;
+  resamplePos = 0; // in input sample units
 
-  private pending: Int16Array;
-  private pendingLen = 0;
+  pending;
+  pendingLen = 0;
 
-  constructor(options: any) {
+  constructor(options) {
     super();
     this.inputSampleRate = sampleRate;
-    const target = (options.processorOptions?.targetSampleRate as number | undefined) ?? 16000;
+    const target = options?.processorOptions?.targetSampleRate ?? 16000;
     this.outputSampleRate = target;
     this.ratio = this.inputSampleRate / this.outputSampleRate;
 
@@ -35,7 +28,7 @@ class Pcm16ResampleProcessor extends AudioWorkletProcessor {
     this.pending = new Int16Array(this.frameSamples * 8);
   }
 
-  process(inputs: Float32Array[][]) {
+  process(inputs) {
     const input = inputs[0];
     if (!input || input.length === 0) return true;
     const channels = input.length;
@@ -51,9 +44,9 @@ class Pcm16ResampleProcessor extends AudioWorkletProcessor {
       let s0 = 0;
       let s1 = 0;
       for (let ch = 0; ch < channels; ch++) {
-        const buf = input[ch]!;
-        s0 += buf[i0] ?? 0;
-        s1 += buf[i1] ?? 0;
+        const buf = input[ch];
+        s0 += buf?.[i0] ?? 0;
+        s1 += buf?.[i1] ?? 0;
       }
       s0 /= channels;
       s1 /= channels;
@@ -71,7 +64,7 @@ class Pcm16ResampleProcessor extends AudioWorkletProcessor {
     return true;
   }
 
-  private pushSample(sample: number) {
+  pushSample(sample) {
     if (this.pendingLen >= this.pending.length) {
       const next = new Int16Array(this.pending.length * 2);
       next.set(this.pending);
@@ -85,9 +78,9 @@ class Pcm16ResampleProcessor extends AudioWorkletProcessor {
       const bytes = frame.buffer.slice(
         frame.byteOffset,
         frame.byteOffset + frame.byteLength,
-      ) as ArrayBuffer;
+      );
 
-      const msg: FrameMessage = {
+      const msg = {
         type: "pcm16.frame",
         pcm16: bytes,
         sampleRateHz: this.outputSampleRate,
@@ -104,4 +97,3 @@ class Pcm16ResampleProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor("pcm16-resample", Pcm16ResampleProcessor);
-

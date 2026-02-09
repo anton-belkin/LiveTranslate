@@ -8,3 +8,4 @@ build
 pnpm-debug.log
 *.log
 .cursor/debug.log
+oauth consent id.txt
