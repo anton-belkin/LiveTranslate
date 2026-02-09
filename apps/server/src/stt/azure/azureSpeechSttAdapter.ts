@@ -38,6 +38,9 @@ function toLang(locale?: string): Lang | undefined {
   const l = locale.toLowerCase();
   if (l === "de" || l.startsWith("de-")) return "de";
   if (l === "en" || l.startsWith("en-")) return "en";
+  if (l === "fr" || l.startsWith("fr-")) return "fr";
+  if (l === "it" || l.startsWith("it-")) return "it";
+  if (l === "ru" || l.startsWith("ru-")) return "ru";
   return undefined;
 }
 

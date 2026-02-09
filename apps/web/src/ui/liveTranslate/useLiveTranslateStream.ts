@@ -1,4 +1,4 @@
-import { useCallback, useRef, type Dispatch } from "react";
+import { useCallback, useEffect, useRef, type Dispatch } from "react";
 
 import {
   PROTOCOL_VERSION,
@@ -20,6 +20,8 @@ type UseLiveTranslateStreamArgs = {
   specialWords?: string[];
   specialWordsBoost?: number;
   audioSource: "mic" | "tab" | "both";
+  paused: boolean;
+  micMuted: boolean;
 };
 
 function makeHello(args: {
@@ -50,11 +52,16 @@ export function useLiveTranslateStream({
   specialWords,
   specialWordsBoost,
   audioSource,
+  paused,
+  micMuted,
 }: UseLiveTranslateStreamArgs) {
   const socketRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicStreamerHandle | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const frameCountRef = useRef(0);
+  const pausedRef = useRef(paused);
+
+  pausedRef.current = paused;
 
   const stopMic = useCallback(async () => {
     const mic = micRef.current;
@@ -68,6 +75,7 @@ export function useLiveTranslateStream({
       micRef.current = await startMicStreamer({
         audioSource,
         onFrame: (frame) => {
+          if (pausedRef.current) return;
           const socket = socketRef.current;
           const sessionId = sessionIdRef.current;
           if (!socket || socket.readyState !== WebSocket.OPEN) return;
@@ -95,6 +103,7 @@ export function useLiveTranslateStream({
           }
         },
       });
+      micRef.current.setMicMuted(micMuted);
     } catch (err) {
       dispatch({
         type: "connection.update",
@@ -102,7 +111,11 @@ export function useLiveTranslateStream({
         error: `Audio capture error: ${String(err)}`,
       });
     }
-  }, [audioSource, dispatch]);
+  }, [audioSource, dispatch, micMuted]);
+
+  const setMicMuted = useCallback((muted: boolean) => {
+    micRef.current?.setMicMuted(muted);
+  }, []);
 
   const stop = useCallback(async () => {
     const socket = socketRef.current;
@@ -123,6 +136,10 @@ export function useLiveTranslateStream({
     socketRef.current = null;
     await stopMic();
   }, [stopMic]);
+
+  useEffect(() => {
+    setMicMuted(micMuted);
+  }, [micMuted, setMicMuted]);
 
   const start = useCallback(async () => {
     if (socketRef.current) return;

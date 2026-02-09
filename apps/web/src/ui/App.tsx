@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useReducer, useState } from "react";
+import type { Lang } from "@livetranslate/shared";
 
 import { TranscriptView } from "./liveTranslate/TranscriptView";
 import { makeInitialState, transcriptReducer } from "./liveTranslate/store";
 import { useLiveTranslateStream } from "./liveTranslate/useLiveTranslateStream";
 import { parseUrlConfig, updateUrlParam } from "./liveTranslate/urlConfig";
+
+const LANG_OPTIONS: Lang[] = ["en", "de", "fr", "it", "ru"];
 
 export function App() {
   const [state, dispatch] = useReducer(transcriptReducer, undefined, makeInitialState);
@@ -16,7 +19,11 @@ export function App() {
     urlConfig.specialWordsBoost ?? 1,
   );
   const [showContextPopover, setShowContextPopover] = useState(false);
+  const [showLangPopover, setShowLangPopover] = useState(false);
   const [audioSource, setAudioSource] = useState(urlConfig.audioSource);
+  const [targetLangs, setTargetLangs] = useState<Lang[]>(urlConfig.targetLangs);
+  const [paused, setPaused] = useState(false);
+  const [micMuted, setMicMuted] = useState(false);
   const isLean = urlConfig.lean;
 
   useEffect(() => {
@@ -44,6 +51,10 @@ export function App() {
   }, [audioSource]);
 
   useEffect(() => {
+    updateUrlParam("langs", targetLangs.join(","));
+  }, [targetLangs]);
+
+  useEffect(() => {
     if (!isLean) return;
     document.body.classList.add("leanBody");
     return () => document.body.classList.remove("leanBody");
@@ -61,11 +72,13 @@ export function App() {
   const stream = useLiveTranslateStream({
     url: state.url,
     dispatch,
-    targetLangs: urlConfig.targetLangs,
+    targetLangs,
     staticContext: staticContext.trim() || undefined,
     specialWords,
     specialWordsBoost,
     audioSource,
+    paused,
+    micMuted,
   });
 
   useEffect(() => {
@@ -125,6 +138,20 @@ export function App() {
             >
               Clear
             </button>
+            <button
+              className="btn btnSmall"
+              onClick={() => setPaused((prev) => !prev)}
+              disabled={state.status !== "open"}
+            >
+              {paused ? "Resume" : "Pause"}
+            </button>
+            <button
+              className="btn btnSmall"
+              onClick={() => setMicMuted((prev) => !prev)}
+              disabled={audioSource === "tab"}
+            >
+              {micMuted ? "Mic unmute" : "Mic mute"}
+            </button>
             <label className="toggle">
               <input
                 type="checkbox"
@@ -152,6 +179,43 @@ export function App() {
                 <option value="both">Both</option>
               </select>
             </label>
+            <div className="popover">
+              <button
+                className="btn btnSmall"
+                onClick={() => setShowLangPopover((prev) => !prev)}
+              >
+                Langs {targetLangs.length > 0 ? `(${targetLangs.join(",")})` : ""}
+              </button>
+              {showLangPopover ? (
+                <div className="popoverPanel">
+                  {LANG_OPTIONS.map((lang) => {
+                    const checked = targetLangs.includes(lang);
+                    const limitReached = targetLangs.length >= 4 && !checked;
+                    return (
+                      <label className="fieldLabel" key={lang}>
+                        <span>{lang}</span>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={limitReached}
+                          onChange={(ev) => {
+                            const nextChecked = ev.target.checked;
+                            setTargetLangs((prev) => {
+                              if (nextChecked) {
+                                const next = [...prev, lang];
+                                return next.length > 4 ? next.slice(0, 4) : next;
+                              }
+                              const next = prev.filter((item) => item !== lang);
+                              return next.length > 0 ? next : prev;
+                            });
+                          }}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
             <div className="popover">
               <button
                 className="btn btnSmall"

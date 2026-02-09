@@ -14,6 +14,7 @@ export type MicStreamerHandle = {
   inputSampleRateHz: number;
   outputSampleRateHz: number;
   stop: () => Promise<void>;
+  setMicMuted: (muted: boolean) => void;
 };
 
 import workletModuleUrl from "./pcm16ResampleWorklet.js?url";
@@ -22,8 +23,11 @@ export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicS
   const targetSampleRateHz = opts.targetSampleRateHz ?? 16000;
 
   const mediaStreams: MediaStream[] = [];
+  const micTracks: MediaStreamTrack[] = [];
   if (opts.audioSource === "mic" || opts.audioSource === "both") {
-    mediaStreams.push(await navigator.mediaDevices.getUserMedia({ audio: true }));
+    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaStreams.push(micStream);
+    micTracks.push(...micStream.getAudioTracks());
   }
   if (opts.audioSource === "tab" || opts.audioSource === "both") {
     if (!navigator.mediaDevices.getDisplayMedia) {
@@ -136,6 +140,11 @@ export async function startMicStreamer(opts: StartMicStreamerOpts): Promise<MicS
     inputSampleRateHz: audioCtx.sampleRate,
     outputSampleRateHz: targetSampleRateHz,
     stop,
+    setMicMuted: (muted: boolean) => {
+      for (const track of micTracks) {
+        track.enabled = !muted;
+      }
+    },
   };
 }
 

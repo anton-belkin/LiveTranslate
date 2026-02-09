@@ -11,6 +11,14 @@ import {
 } from "../translate/groq/groqTranslate.js";
 
 const DEFAULT_IDLE_STOP_MS = 30_000;
+const MAX_AUTO_DETECT_LANGS = 4;
+const AZURE_LOCALE_BY_LANG: Record<string, string> = {
+  en: "en-US",
+  de: "de-DE",
+  fr: "fr-FR",
+  it: "it-IT",
+  ru: "ru-RU",
+};
 
 type Entry = {
   sessionId: string;
@@ -60,6 +68,18 @@ export function registerAzureStt(ws: WsServerApi) {
     return normalizeLangList(groqConfig.targetLangs);
   }
 
+  function resolveAutoDetectLanguages(targetLangs: Lang[], fallback: string[]) {
+    const mapped: string[] = [];
+    for (const lang of targetLangs) {
+      const locale = AZURE_LOCALE_BY_LANG[String(lang).toLowerCase()];
+      if (!locale || mapped.includes(locale)) continue;
+      mapped.push(locale);
+      if (mapped.length >= MAX_AUTO_DETECT_LANGS) break;
+    }
+    if (mapped.length > 0) return mapped;
+    return fallback.slice(0, MAX_AUTO_DETECT_LANGS);
+  }
+
   function ensureEntry(
     sessionId: string,
     hello: {
@@ -74,9 +94,13 @@ export function registerAzureStt(ws: WsServerApi) {
     if (existing) return existing;
 
     let entry: Entry;
+    const resolvedTargetLangs = resolveTargetLangs(hello);
     const adapter = new AzureSpeechSttAdapter({
       sessionId,
-      config,
+      config: {
+        ...config,
+        autoDetectLanguages: resolveAutoDetectLanguages(resolvedTargetLangs, config.autoDetectLanguages),
+      },
       specialWords: hello.specialWords,
       specialWordsBoost: hello.specialWordsBoost,
       emit: (msg) => {
@@ -103,7 +127,7 @@ export function registerAzureStt(ws: WsServerApi) {
       adapter,
       idleTimer: null,
       lastFrameAt: Date.now(),
-      targetLangs: resolveTargetLangs(hello),
+      targetLangs: resolvedTargetLangs,
       staticContext: hello.staticContext ?? groqConfig.staticContext,
       specialWords: hello.specialWords,
       specialWordsBoost: hello.specialWordsBoost,

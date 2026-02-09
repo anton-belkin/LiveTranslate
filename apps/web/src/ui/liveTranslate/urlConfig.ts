@@ -17,8 +17,8 @@ export function parseUrlConfig(): UrlConfig {
   const params = new URLSearchParams(window.location.search);
   const langs = parseLangsParam(params.get("langs"));
   const lean = parseBoolParam(params.get("lean"), false);
-  const showOriginal = parseBoolParam(params.get("showOriginal"), true);
-  const showSummary = parseBoolParam(params.get("showSummary"), !lean);
+  const showOriginal = parseBoolParam(params.get("showOriginal"), false);
+  const showSummary = parseBoolParam(params.get("showSummary"), false);
   const staticContext = params.get("staticContext")?.trim() || undefined;
   const specialWords = parseMultilineParam(params.get("specialWords"));
   const specialWordsBoost = parseIntParam(params.get("specialWordsBoost"), 1, 1, 5);
