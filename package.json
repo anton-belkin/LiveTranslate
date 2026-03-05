@@ -6,10 +6,13 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "pnpm -r --parallel --filter ./packages/shared dev --filter ./apps/* dev",
+    "dev": "pnpm -r --parallel --filter ./packages/shared --filter ./apps/server --filter ./apps/web run dev",
     "build": "pnpm -r --filter ./apps/* build && pnpm -r --filter ./packages/* build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "test:docker": "docker compose --profile funnel --env-file .env.test -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.test.yml up -d",
+    "test:docker:down": "docker compose --profile funnel -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.test.yml down",
+    "prod:docker": "docker compose --env-file .env -f docker-compose.yml -f docker-compose.override.yml up -d"
   },
   "pnpm": {
     "overrides": {

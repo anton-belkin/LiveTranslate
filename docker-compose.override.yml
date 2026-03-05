@@ -1,0 +1,9 @@
+# Local override: expose oauth2-proxy. Host port configurable via OAUTH2_PROXY_HOST_PORT.
+# Test uses 4181 (see .env.test); prod uses 4180. Tailscale is in "funnel" profile.
+services:
+  oauth2-proxy:
+    ports:
+      - "${OAUTH2_PROXY_HOST_PORT:-4180}:4180"
+  tailscale:
+    profiles:
+      - funnel

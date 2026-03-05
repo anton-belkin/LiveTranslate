@@ -1,5 +1,7 @@
 # UGOS NAS deploy (Docker Compose + Tailscale Funnel)
 
+**Environments:** Dev (`pnpm dev`) | Test (local Docker: `pnpm test:docker`) | **Prod** (this guide)
+
 This repo ships a full-stack Compose setup with:
 - `caddy` serving the web UI and proxying `/ws`
 - `oauth2-proxy` handling Google SSO + email allowlist
@@ -16,17 +18,17 @@ In Google Cloud Console:
 
 Important: if you rename the Tailscale node or tailnet, you must update the redirect URI.
 
-## 2) Configure the email allowlist
+## 2) Configure the production email allowlist
 
-Edit `ops/oauth2-proxy/emails.yaml` (one email per line):
+Edit `ops/oauth2-proxy/emails.yaml` (one email per line; this is the prod allowlist, separate from `emails.test.yaml` used for test):
 ```
 alice@example.com
 bob@example.com
 ```
 
-## 3) Create environment file on the NAS
+## 3) Create production environment file on the NAS
 
-Create `.env` next to `docker-compose.yml` with at least:
+Create `.env` next to `docker-compose.yml` (copy from `.env.example.production` and fill in values). At minimum:
 ```
 # Tailscale
 TS_AUTHKEY=tskey-xxxxx
@@ -37,6 +39,7 @@ OAUTH2_PROXY_CLIENT_ID=your_client_id.apps.googleusercontent.com
 OAUTH2_PROXY_CLIENT_SECRET=your_client_secret
 OAUTH2_PROXY_COOKIE_SECRET=your_32_byte_base64url_secret
 OAUTH2_PROXY_COOKIE_DOMAINS=your-node.your-tailnet.ts.net
+OAUTH2_PROXY_REDIRECT_URL=https://your-node.your-tailnet.ts.net/oauth2/callback
 
 # Server
 AZURE_SPEECH_KEY=...

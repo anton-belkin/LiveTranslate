@@ -1,0 +1,9 @@
+# Test environment: use .env.test for server and compose variable substitution.
+# Run: pnpm test:docker (or docker compose --env-file .env.test -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.test.yml up -d)
+services:
+  server:
+    env_file:
+      - ./.env.test
+  oauth2-proxy:
+    volumes:
+      - ./ops/oauth2-proxy/emails.test.yaml:/etc/oauth2-proxy/emails.yaml:ro

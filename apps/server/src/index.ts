@@ -8,19 +8,37 @@ import { createWsServer } from "./ws/server.js";
 import { registerAzureStt } from "./stt/registerAzureStt.js";
 
 // Load environment variables from `.env` files if present.
-// Order matters: `apps/server/.env` first, then repo root `.env`.
+// NODE_ENV-aware: development → .env.development, test → .env.test, production → .env.production.
+// Falls back to .env if env-specific file does not exist.
+// Order: env-specific first, then .env; apps/server/ first, then repo root.
 // We never read/print the file contents; this just populates `process.env`.
 // We intentionally do NOT override already-set variables.
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const serverEnvPath = resolve(__dirname, "../.env"); // apps/server/.env
-const repoRootEnvPath = resolve(__dirname, "../../../.env"); // repo root .env
-if (existsSync(serverEnvPath)) {
-  dotenv.config({ path: serverEnvPath });
+const serverDir = resolve(__dirname, ".."); // apps/server
+const repoRoot = resolve(__dirname, "../../.."); // repo root
+
+const nodeEnv = process.env.NODE_ENV ?? "development";
+const envSuffix =
+  nodeEnv === "development"
+    ? "development"
+    : nodeEnv === "test"
+      ? "test"
+      : nodeEnv === "production"
+        ? "production"
+        : null;
+
+function loadEnv(dir: string) {
+  if (envSuffix) {
+    const envSpecific = resolve(dir, `.env.${envSuffix}`);
+    if (existsSync(envSpecific)) dotenv.config({ path: envSpecific });
+  }
+  const envPath = resolve(dir, ".env");
+  if (existsSync(envPath)) dotenv.config({ path: envPath });
 }
-if (existsSync(repoRootEnvPath)) {
-  dotenv.config({ path: repoRootEnvPath });
-}
+
+loadEnv(serverDir);
+loadEnv(repoRoot);
 
 const port = Number(process.env.PORT ?? 8787);
 

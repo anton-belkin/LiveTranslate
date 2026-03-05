@@ -1,0 +1,5 @@
+# Test environment allowlist — one email per line.
+# Used when running pnpm test:docker (see docker-compose.test.yml).
+# Add test accounts here; keep separate from production emails.yaml.
+# Replace with your test account(s):
+tester@example.com

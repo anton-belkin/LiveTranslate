@@ -8,9 +8,16 @@ Start here for product context: `docs/PRODUCT.md`.
 
 ## Prereqs
 - Node.js 20+
-- pnpm
+- pnpm (enable via Corepack, see below)
 
 ## Install
+
+If `pnpm` is not found, enable it first (Node.js 20+ ships with Corepack):
+```bash
+corepack enable
+```
+
+Then install dependencies:
 ```bash
 pnpm install
 ```
@@ -29,20 +36,31 @@ Or run both (pnpm will run `dev` in all apps):
 pnpm dev
 ```
 
+## Environments
+
+| Environment | Run | Env file |
+|-------------|-----|----------|
+| **Dev** | `pnpm dev` | `.env.development` (create from `.env.example.development`) |
+| **Test** | `pnpm test:docker` | `.env.test` (create from `.env.example.test`). Access at http://localhost:4181. Use `--profile funnel` to include Tailscale. |
+| **Prod** | See `docs/deploy-nas.md` | `.env` on NAS (create from `.env.example.production`) |
+
+See `docs/ENVIRONMENTS.md` for full setup and usage.
+
 ## Run with Docker + Tailscale Funnel
+
 The containerized stack uses:
 - `oauth2-proxy` for Google SSO + email allowlist
 - `caddy` to serve the web app and proxy `/ws`
 - `server` for WebSocket + STT/translation
 - `tailscale` sidecar to expose the stack via Funnel
 
-Follow the deployment guide:
-- `docs/deploy-nas.md`
+- **Test (local Docker):** `pnpm test:docker` — uses `.env.test`, access at http://localhost:4181
+- **Prod (NAS):** Follow `docs/deploy-nas.md` — uses `.env` on the NAS
 
-Quick start (after configuring `.env` and `ops/oauth2-proxy/emails.yaml`):
+Quick start for test (after configuring `.env.test` and `ops/oauth2-proxy/emails.test.yaml`):
 ```bash
 docker compose build
-docker compose up -d
+pnpm test:docker
 ```
 
 ## Lesson learned: shared dist must be fresh

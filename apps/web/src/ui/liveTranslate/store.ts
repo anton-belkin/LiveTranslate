@@ -75,8 +75,8 @@ function getDefaultWsUrl() {
   if (typeof fromEnv === "string" && fromEnv.length > 0) return fromEnv;
   if (typeof window !== "undefined" && window.location) {
     if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
-      const devUrl = "ws://localhost:8787";
-      return devUrl;
+      const port = import.meta.env.VITE_WS_PORT ?? "8787";
+      return `ws://localhost:${port}`;
     }
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const computedUrl = `${wsProtocol}//${window.location.host}/ws`;
