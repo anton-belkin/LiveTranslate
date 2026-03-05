@@ -2,19 +2,42 @@
 
 **Environments:** Dev (`pnpm dev`) | Test (local Docker: `pnpm test:docker`) | **Prod** (this guide)
 
+This guide deploys LiveTranslate to a UGOS NAS (e.g. at `192.168.50.186`) with the same stack as test: Docker + Tailscale Funnel + Google OAuth.
+
 This repo ships a full-stack Compose setup with:
 - `caddy` serving the web UI and proxying `/ws`
 - `oauth2-proxy` handling Google SSO + email allowlist
 - `server` WebSocket backend
 - `tailscale` sidecar exposing Caddy via Funnel
 
+## 0) Get the code onto the NAS
+
+From your dev machine, clone or rsync the repo to the NAS:
+
+```bash
+# Option A: Clone (if NAS has git)
+ssh admin@192.168.50.186
+cd /path/to/your/apps   # e.g. /volume1/docker/livetranslate
+git clone <your-repo-url> .
+```
+
+```bash
+# Option B: Rsync from your dev machine
+rsync -avz --exclude node_modules --exclude .git ./ admin@192.168.50.186:/volume1/docker/livetranslate/
+```
+
+Ensure Docker is installed on the NAS. UGOS typically has Docker available via the package manager or admin UI.
+
 ## 1) Create a Google OAuth client
 
 In Google Cloud Console:
 1. Create an OAuth 2.0 Client ID (type: Web application).
 2. **Authorized redirect URI** must match your Funnel URL exactly:
-   - `https://<your-node>.<your-tailnet>.ts.net/oauth2/callback`
+   - `https://<TS_HOSTNAME>.<your-tailnet>.ts.net/oauth2/callback`
+   - Example: `https://livetranslate.tailf19888.ts.net/oauth2/callback` if `TS_HOSTNAME=livetranslate` and your tailnet is `tailf19888.ts.net`
 3. Save the Client ID and Client Secret.
+
+**Tip:** You can add the redirect URI before starting the stack—the Funnel URL is `https://<TS_HOSTNAME>.<tailnet>/`. Use the same tailnet and hostname you'll set in `.env`.
 
 Important: if you rename the Tailscale node or tailnet, you must update the redirect URI.
 
@@ -54,8 +77,16 @@ python -c 'import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).deco
 
 ## 4) Start the stack
 
+The `tailscale` service is in the `funnel` profile. Include it to expose the app via Funnel:
+
 ```
-docker compose up -d
+docker compose --profile funnel up -d
+```
+
+Or use the npm script (ensure `.env` exists first):
+
+```
+pnpm prod:docker
 ```
 
 ## 5) Get your public Funnel URL
